@@ -5,8 +5,19 @@ from eventyay_business.models import Tier, TierStatus, TierVersion
 
 
 @pytest.fixture
-def business_admin_client(admin_client):
-    # Depending on Eventyay setup, admin_client might just work.
+def business_admin_client(admin_client, admin_user):
+    from eventyay.base.models.auth import StaffSession
+
+    session = admin_client.session
+    session.save()
+    StaffSession.objects.create(
+        user=admin_user,
+        session_key=session.session_key,
+        comment="test",
+    )
+    # Ensure user has is_staff = True (pytest-django's admin_user might only have is_superuser)
+    admin_user.is_staff = True
+    admin_user.save()
     return admin_client
 
 
