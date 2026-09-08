@@ -12,6 +12,11 @@ from .models import (
     TierVersion,
 )
 
+try:
+    from eventyay.base.forms.widgets import SplitDateTimePickerWidget
+except ImportError:
+    from django.forms import SplitDateTimeWidget as SplitDateTimePickerWidget
+
 
 class TierForm(forms.ModelForm):
     class Meta:
@@ -139,6 +144,11 @@ class SubscriptionAdminForm(forms.ModelForm):
             "stripe_customer_id",
             "stripe_subscription_id",
         ]
+        widgets = {
+            "starts_at": SplitDateTimePickerWidget(),
+            "ends_at": SplitDateTimePickerWidget(),
+            "cancel_at": SplitDateTimePickerWidget(),
+        }
 
     def clean(self):
         cleaned_data = super().clean()
