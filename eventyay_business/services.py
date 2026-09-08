@@ -51,3 +51,46 @@ def record_usage(
 
         # Re-raise all other integrity errors
         raise
+
+
+def seed_standard_entitlements_for_version(tier_version, TierEntitlementModel=None):
+    """
+    Populates standard catalogue capabilities as TierEntitlement database records
+    for the given tier_version if they do not already exist.
+    """
+    if TierEntitlementModel is None:
+        from .models import TierEntitlement as TierEntitlementModel
+
+    from .capabilities import STANDARD_CAPABILITIES, CapabilityValueType
+
+    existing_caps = set(
+        TierEntitlementModel.objects.filter(tier_version=tier_version).values_list(
+            "capability", flat=True
+        )
+    )
+
+    entitlements_to_create = []
+    for cap in STANDARD_CAPABILITIES:
+        if cap.name in existing_caps:
+            continue
+
+        raw_val = cap.default_value
+        if cap.value_type == CapabilityValueType.BOOLEAN:
+            str_val = "true" if raw_val else "false"
+        elif raw_val is not None:
+            str_val = str(raw_val)
+        else:
+            str_val = ""
+
+        entitlements_to_create.append(
+            TierEntitlementModel(
+                tier_version=tier_version,
+                capability=cap.name,
+                value=str_val,
+                unit=cap.unit or "",
+                overage_allowed=False,
+            )
+        )
+
+    if entitlements_to_create:
+        TierEntitlementModel.objects.bulk_create(entitlements_to_create)
