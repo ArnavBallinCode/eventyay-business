@@ -93,4 +93,9 @@ def seed_standard_entitlements_for_version(tier_version, TierEntitlementModel=No
         )
 
     if entitlements_to_create:
-        TierEntitlementModel.objects.bulk_create(entitlements_to_create)
+        try:
+            TierEntitlementModel.objects.bulk_create(
+                entitlements_to_create, ignore_conflicts=True
+            )
+        except IntegrityError:
+            pass
