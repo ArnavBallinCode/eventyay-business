@@ -33,6 +33,29 @@ if nav_global:
         if not url:
             return []
 
+        user = getattr(request, "user", None)
+        if (
+            not user
+            or not user.is_authenticated
+            or not (user.is_staff or user.is_superuser)
+        ):
+            return []
+
+        path = getattr(request, "path_info", "") or getattr(request, "path", "")
+        # Tiers and Subscriptions are global administrative configuration.
+        # Only show them in the admin navigation area, not in public-facing or common user dashboards.
+        is_admin_area = (
+            url.namespace == "eventyay_admin"
+            or (
+                url.namespace == "plugins:eventyay_business"
+                and not url.url_name.startswith("organizer.")
+            )
+            or url.url_name.startswith("admin.")
+            or path.startswith("/admin/")
+        )
+        if not is_admin_area:
+            return []
+
         return [
             {
                 "label": _("Tiers"),
