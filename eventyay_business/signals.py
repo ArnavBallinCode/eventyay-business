@@ -34,7 +34,11 @@ if nav_global:
             return []
 
         user = getattr(request, "user", None)
-        if not user or not user.is_authenticated or not (user.is_staff or user.is_superuser):
+        if (
+            not user
+            or not user.is_authenticated
+            or not (user.is_staff or user.is_superuser)
+        ):
             return []
 
         path = getattr(request, "path_info", "") or getattr(request, "path", "")
