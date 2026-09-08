@@ -97,7 +97,14 @@ def auto_assign_free_tier(sender, instance, created, **kwargs):
     if not created:
         return
 
-    from .models import Subscription, SubscriptionStatus, Tier, TierVersion
+    from .models import (
+        Subscription,
+        SubscriptionStatus,
+        Tier,
+        TierStatus,
+        TierVersion,
+    )
+    from .services import seed_standard_entitlements_for_version
 
     free_tier, _ = Tier.objects.get_or_create(
         slug="free",
@@ -105,8 +112,12 @@ def auto_assign_free_tier(sender, instance, created, **kwargs):
             "name": "Free",
             "description": "Default free tier",
             "is_public": True,
+            "status": TierStatus.PUBLISHED,
         },
     )
+    if free_tier.status == TierStatus.DRAFT:
+        free_tier.status = TierStatus.PUBLISHED
+        free_tier.save(update_fields=["status"])
 
     latest_version = (
         free_tier.versions.filter(published_at__isnull=False)
@@ -117,6 +128,11 @@ def auto_assign_free_tier(sender, instance, created, **kwargs):
         latest_version, _ = TierVersion.objects.get_or_create(
             tier=free_tier, version=1, defaults={"published_at": now()}
         )
+        if latest_version.published_at is None:
+            latest_version.published_at = now()
+            latest_version.save(update_fields=["published_at"])
+
+    seed_standard_entitlements_for_version(latest_version)
 
     Subscription.objects.create(
         organizer=instance,
