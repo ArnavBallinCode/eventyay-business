@@ -127,9 +127,23 @@
                             <i class="fa fa-fw fa-edit"></i> {% trans "Edit Draft" %}
                         </a>
                         {% if latest_version %}
-                            <form action="{% url 'plugins:eventyay_business:tiers.publish' pk=tier.pk %}" method="post" style="display:inline;">
+                            <form action="{% url 'plugins:eventyay_business:tiers.publish' pk=tier.pk %}" method="post">
                                 {% csrf_token %}
-                                <button class="list-group-item" onclick="return confirm('{% trans "Are you sure you want to publish this draft? It cannot be edited once published." %}');">
+                                {% if has_previous_published_version %}
+                                    <div class="list-group-item">
+                                        <div class="checkbox" style="margin: 0;">
+                                            <label>
+                                                <input type="checkbox" name="migrate_subscribers" value="1" checked>
+                                                {% blocktrans count counter=previous_subscribers_count trimmed with version=latest_version.version %}
+                                                    Migrate {{ counter }} existing subscriber to v{{ version }}
+                                                {% plural %}
+                                                    Migrate {{ counter }} existing subscribers to v{{ version }}
+                                                {% endblocktrans %}
+                                            </label>
+                                        </div>
+                                    </div>
+                                {% endif %}
+                                <button type="submit" class="list-group-item" onclick="return confirm('{% trans "Are you sure you want to publish this draft? It cannot be edited once published." %}');">
                                     <i class="fa fa-fw fa-bullhorn text-success"></i> {% trans "Publish Draft" %}
                                 </button>
                             </form>

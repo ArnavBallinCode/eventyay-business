@@ -1,7 +1,16 @@
 import pytest
 from django.urls import reverse
+from django.utils.timezone import now
+from eventyay.base.models import Organizer
 
-from eventyay_business.models import Tier, TierStatus, TierVersion
+from eventyay_business.models import (
+    Subscription,
+    SubscriptionStatus,
+    Tier,
+    TierStatus,
+    TierVersion,
+)
+from eventyay_business.services import migrate_tier_subscribers
 
 
 @pytest.fixture
@@ -77,3 +86,137 @@ def test_tier_new_draft_view(business_admin_client, sample_tier):
     v2 = sample_tier.versions.order_by("-version").first()
     assert v2.version == 2
     assert v2.published_at is None
+
+
+@pytest.mark.django_db
+def test_migrate_tier_subscribers_service():
+    tier = Tier.objects.create(
+        name="Pro", slug="pro-migrate", status=TierStatus.PUBLISHED
+    )
+    v1 = TierVersion.objects.create(tier=tier, version=1, published_at=now())
+    v2 = TierVersion.objects.create(tier=tier, version=2, published_at=now())
+
+    org1 = Organizer.objects.create(name="Org 1", slug="org-1")
+    Subscription.objects.filter(organizer=org1).delete()
+    org2 = Organizer.objects.create(name="Org 2", slug="org-2")
+    Subscription.objects.filter(organizer=org2).delete()
+
+    sub_active = Subscription.objects.create(
+        organizer=org1,
+        tier_version=v1,
+        status=SubscriptionStatus.ACTIVE,
+        starts_at=now(),
+    )
+    sub_canceled = Subscription.objects.create(
+        organizer=org2,
+        tier_version=v1,
+        status=SubscriptionStatus.CANCELED,
+        starts_at=now(),
+    )
+
+    migrated_count = migrate_tier_subscribers(tier, v2)
+    assert migrated_count == 1
+
+    sub_active.refresh_from_db()
+    sub_canceled.refresh_from_db()
+
+    assert sub_active.tier_version == v2
+    assert sub_canceled.tier_version == v1
+
+
+@pytest.mark.django_db
+def test_tier_detail_view_shows_migrate_checkbox(business_admin_client, sample_tier):
+    v1 = sample_tier.versions.first()
+    v1.published_at = now()
+    v1.save()
+    sample_tier.status = TierStatus.PUBLISHED
+    sample_tier.save()
+
+    # Create draft v2
+    TierVersion.objects.create(tier=sample_tier, version=2)
+
+    org = Organizer.objects.create(name="Org Subscriber", slug="org-sub")
+    Subscription.objects.filter(organizer=org).delete()
+    Subscription.objects.create(
+        organizer=org,
+        tier_version=v1,
+        status=SubscriptionStatus.ACTIVE,
+        starts_at=now(),
+    )
+
+    url = reverse(
+        "plugins:eventyay_business:tiers.detail", kwargs={"pk": sample_tier.pk}
+    )
+    response = business_admin_client.get(url)
+    assert response.status_code == 200
+    content = response.content.decode()
+    assert "migrate_subscribers" in content
+    assert "Migrate 1 existing subscriber to v2" in content
+
+
+@pytest.mark.django_db
+def test_tier_publish_view_with_migrate_subscribers(business_admin_client, sample_tier):
+    v1 = sample_tier.versions.first()
+    v1.published_at = now()
+    v1.save()
+    sample_tier.status = TierStatus.PUBLISHED
+    sample_tier.save()
+
+    v2 = TierVersion.objects.create(tier=sample_tier, version=2)
+
+    org = Organizer.objects.create(name="Org To Migrate", slug="org-migrate")
+    Subscription.objects.filter(organizer=org).delete()
+    sub = Subscription.objects.create(
+        organizer=org,
+        tier_version=v1,
+        status=SubscriptionStatus.ACTIVE,
+        starts_at=now(),
+    )
+
+    url = reverse(
+        "plugins:eventyay_business:tiers.publish", kwargs={"pk": sample_tier.pk}
+    )
+    response = business_admin_client.post(
+        url, {"migrate_subscribers": "1"}, follow=True
+    )
+    assert response.status_code == 200
+
+    v2.refresh_from_db()
+    assert v2.published_at is not None
+
+    sub.refresh_from_db()
+    assert sub.tier_version == v2
+
+
+@pytest.mark.django_db
+def test_tier_publish_view_without_migrate_subscribers(
+    business_admin_client, sample_tier
+):
+    v1 = sample_tier.versions.first()
+    v1.published_at = now()
+    v1.save()
+    sample_tier.status = TierStatus.PUBLISHED
+    sample_tier.save()
+
+    v2 = TierVersion.objects.create(tier=sample_tier, version=2)
+
+    org = Organizer.objects.create(name="Org Keep V1", slug="org-keep-v1")
+    Subscription.objects.filter(organizer=org).delete()
+    sub = Subscription.objects.create(
+        organizer=org,
+        tier_version=v1,
+        status=SubscriptionStatus.ACTIVE,
+        starts_at=now(),
+    )
+
+    url = reverse(
+        "plugins:eventyay_business:tiers.publish", kwargs={"pk": sample_tier.pk}
+    )
+    response = business_admin_client.post(url, {}, follow=True)
+    assert response.status_code == 200
+
+    v2.refresh_from_db()
+    assert v2.published_at is not None
+
+    sub.refresh_from_db()
+    assert sub.tier_version == v1
