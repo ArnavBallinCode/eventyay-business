@@ -13,8 +13,20 @@ from django.views.generic import (
 )
 from eventyay.control.permissions import AdministratorPermissionRequiredMixin
 
-from .forms import TierEntitlementFormSet, TierForm, TierPriceFormSet
-from .models import Tier, TierStatus, TierVersion
+from .forms import (
+    SubscriptionAdminForm,
+    TierEntitlementFormSet,
+    TierForm,
+    TierPriceFormSet,
+)
+from .models import (
+    Subscription,
+    SubscriptionStatus,
+    Tier,
+    TierStatus,
+    TierVersion,
+)
+from .services import migrate_tier_subscribers
 
 
 class TierListView(AdministratorPermissionRequiredMixin, ListView):
@@ -137,7 +149,17 @@ class TierDetailView(AdministratorPermissionRequiredMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["latest_version"] = self.object.versions.first()
+        latest_version = self.object.versions.first()
+        context["latest_version"] = latest_version
+        if latest_version and not latest_version.published_at:
+            prev_versions = self.object.versions.filter(published_at__isnull=False)
+            has_prev = prev_versions.exists()
+            context["has_previous_published_version"] = has_prev
+            if has_prev:
+                context["previous_subscribers_count"] = Subscription.objects.filter(
+                    tier_version__in=prev_versions,
+                    status__in=[SubscriptionStatus.ACTIVE, SubscriptionStatus.PENDING],
+                ).count()
         return context
 
 
@@ -204,7 +226,22 @@ class TierPublishView(AdministratorPermissionRequiredMixin, View):
                 tier.status = TierStatus.PUBLISHED
                 tier.save()
 
-            messages.success(request, _("Tier published successfully."))
+            migrate_subs = request.POST.get("migrate_subscribers") in (
+                "1",
+                "true",
+                "on",
+            )
+            if migrate_subs:
+                count = migrate_tier_subscribers(tier, latest_version)
+                messages.success(
+                    request,
+                    _(
+                        "Tier published successfully. Migrated %(count)d subscriber(s) to v%(version)d."
+                    )
+                    % {"count": count, "version": latest_version.version},
+                )
+            else:
+                messages.success(request, _("Tier published successfully."))
         else:
             messages.error(request, _("This tier has no unpublished draft."))
 
@@ -219,10 +256,6 @@ class TierArchiveView(AdministratorPermissionRequiredMixin, View):
         tier.save()
         messages.success(request, _("Tier archived successfully."))
         return redirect(reverse("plugins:eventyay_business:tiers.list"))
-
-
-from .forms import SubscriptionAdminForm
-from .models import Subscription
 
 
 class SubscriptionListView(AdministratorPermissionRequiredMixin, ListView):
