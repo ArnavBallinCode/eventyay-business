@@ -1,0 +1,35 @@
+{% extends "pretixcontrol/admin/base.html" %}
+{% load i18n %}
+{% load bootstrap3 %}
+
+{% block title %}
+    {% if object %}
+        {% trans "Edit add-on" %}
+    {% else %}
+        {% trans "Create add-on" %}
+    {% endif %}
+{% endblock %}
+
+{% block content %}
+    <h1>
+        {% if object %}
+            {% trans "Edit add-on" %}
+        {% else %}
+            {% trans "Create add-on" %}
+        {% endif %}
+    </h1>
+
+    <form method="post" class="form-horizontal">
+        {% csrf_token %}
+        {% bootstrap_form form layout='horizontal' %}
+        
+        <div class="form-group submit-group">
+            <button type="submit" class="btn btn-primary btn-save">
+                {% trans "Save" %}
+            </button>
+            <a href="{% url "plugins:eventyay_business:addons.list" %}" class="btn btn-default btn-cancel">
+                {% trans "Cancel" %}
+            </a>
+        </div>
+    </form>
+{% endblock %}

@@ -57,6 +57,26 @@ urlpatterns = [
         views.SubscriptionUpdateView.as_view(),
         name="subscriptions.edit",
     ),
+    path(
+        "admin/global/business/addons/",
+        views.AddonDefinitionListView.as_view(),
+        name="addons.list",
+    ),
+    path(
+        "admin/global/business/addons/create/",
+        views.AddonDefinitionCreateView.as_view(),
+        name="addons.create",
+    ),
+    path(
+        "admin/global/business/addons/<int:pk>/edit/",
+        views.AddonDefinitionUpdateView.as_view(),
+        name="addons.edit",
+    ),
+    path(
+        "admin/global/business/addons/<int:pk>/toggle/",
+        views.AddonDefinitionToggleActiveView.as_view(),
+        name="addons.toggle",
+    ),
     # Organizer URLs
     path(
         "control/organizer/<str:organizer>/business/plan/",

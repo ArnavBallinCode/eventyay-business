@@ -22,12 +22,14 @@ from eventyay.control.views.organizer_views.organizer_detail_view_mixin import (
 
 from .capabilities import get_all_capabilities
 from .forms import (
+    AddonDefinitionForm,
     SubscriptionAdminForm,
     TierEntitlementFormSet,
     TierForm,
     TierPriceFormSet,
 )
 from .models import (
+    AddonDefinition,
     Subscription,
     SubscriptionStatus,
     Tier,
@@ -367,3 +369,45 @@ class OrganizerPlanView(
             developer_entitlements, key=lambda x: x["capability"].category
         )
         return ctx
+
+
+class AddonDefinitionListView(AdministratorPermissionRequiredMixin, ListView):
+    model = AddonDefinition
+    template_name = "eventyay_business/addons/list.html"
+    context_object_name = "addons"
+
+
+class AddonDefinitionCreateView(AdministratorPermissionRequiredMixin, CreateView):
+    model = AddonDefinition
+    form_class = AddonDefinitionForm
+    template_name = "eventyay_business/addons/form.html"
+
+    def form_valid(self, form):
+        self.object = form.save()
+        messages.success(self.request, _("Add-on created successfully."))
+        return redirect("plugins:eventyay_business:addons.list")
+
+
+class AddonDefinitionUpdateView(AdministratorPermissionRequiredMixin, UpdateView):
+    model = AddonDefinition
+    form_class = AddonDefinitionForm
+    template_name = "eventyay_business/addons/form.html"
+
+    def form_valid(self, form):
+        self.object = form.save()
+        messages.success(self.request, _("Add-on updated successfully."))
+        return redirect("plugins:eventyay_business:addons.list")
+
+
+class AddonDefinitionToggleActiveView(AdministratorPermissionRequiredMixin, View):
+    def post(self, request, pk, *args, **kwargs):
+        addon = get_object_or_404(AddonDefinition, pk=pk)
+        addon.active = not addon.active
+        addon.save(update_fields=["active"])
+        status_text = _("activated") if addon.active else _("deactivated")
+        messages.success(
+            request,
+            _("Add-on %(name)s was %(status)s.")
+            % {"name": addon.name, "status": status_text},
+        )
+        return redirect("plugins:eventyay_business:addons.list")

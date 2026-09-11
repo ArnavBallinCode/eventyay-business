@@ -1,0 +1,99 @@
+{% extends "pretixcontrol/admin/base.html" %}
+{% load i18n %}
+
+{% block title %}
+    {% trans "Add-ons" %}
+{% endblock %}
+
+{% block content %}
+    <h1>{% trans "Add-on Definitions" %}</h1>
+    <p>
+        <a href="{% url 'plugins:eventyay_business:addons.create' %}" class="btn btn-default">
+            <i class="fa fa-plus"></i> {% trans "Create Add-on" %}
+        </a>
+    </p>
+
+    {% if addons|length == 0 %}
+        <div class="empty-collection">
+            <p>
+                {% blocktrans trimmed %}
+                    You haven't configured any add-ons yet.
+                {% endblocktrans %}
+            </p>
+        </div>
+    {% else %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>{% trans "Name" %}</th>
+                        <th>{% trans "Scope" %}</th>
+                        <th>{% trans "Pricing" %}</th>
+                        <th>{% trans "Capability & Entitlement" %}</th>
+                        <th>{% trans "Quantity / Allowance" %}</th>
+                        <th>{% trans "Status" %}</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for addon in addons %}
+                        <tr>
+                            <td>
+                                <strong><a href="{% url 'plugins:eventyay_business:addons.edit' pk=addon.pk %}">{{ addon.name }}</a></strong>
+                                <br>
+                                <small class="text-muted">{{ addon.slug }}</small>
+                            </td>
+                            <td>
+                                {% if addon.assignment_scope == "event" %}
+                                    <span class="label label-info">{% trans "Event" %}</span>
+                                {% else %}
+                                    <span class="label label-primary">{% trans "Organizer" %}</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {{ addon.currency }} {{ addon.price }}
+                                <br>
+                                <small class="text-muted">{{ addon.get_pricing_mode_display }}</small>
+                            </td>
+                            <td>
+                                <code>{{ addon.capability }}</code>
+                                <br>
+                                <small class="text-muted">{% trans "Value:" %} {{ addon.entitlement_value }}</small>
+                            </td>
+                            <td>
+                                {{ addon.quantity }}
+                            </td>
+                            <td>
+                                {% if addon.active %}
+                                    <span class="label label-success">{% trans "Active" %}</span>
+                                {% else %}
+                                    <span class="label label-default">{% trans "Inactive" %}</span>
+                                {% endif %}
+                                {% if addon.public %}
+                                    <span class="label label-info">{% trans "Public" %}</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-right">
+                                <form method="post" action="{% url 'plugins:eventyay_business:addons.toggle' pk=addon.pk %}" style="display: inline-block;">
+                                    {% csrf_token %}
+                                    {% if addon.active %}
+                                        <button type="submit" class="btn btn-warning btn-sm" title="{% trans 'Deactivate' %}">
+                                            <i class="fa fa-ban"></i>
+                                        </button>
+                                    {% else %}
+                                        <button type="submit" class="btn btn-success btn-sm" title="{% trans 'Activate' %}">
+                                            <i class="fa fa-check"></i>
+                                        </button>
+                                    {% endif %}
+                                </form>
+                                <a href="{% url 'plugins:eventyay_business:addons.edit' pk=addon.pk %}" class="btn btn-default btn-sm">
+                                    <i class="fa fa-edit"></i>
+                                </a>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+{% endblock %}

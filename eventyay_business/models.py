@@ -296,3 +296,184 @@ class UsageRecord(models.Model):
 
     def __str__(self):
         return f"{self.quantity} {self.unit} of {self.capability} by {self.organizer}"
+
+
+class AddonAssignmentScope(models.TextChoices):
+    ORGANIZER = "organizer", _("Organizer")
+    EVENT = "event", _("Event")
+
+
+class AddonPricingMode(models.TextChoices):
+    ONE_TIME = "one_time", _("One-time")
+    RECURRING = "recurring", _("Recurring")
+
+
+class AddonStatus(models.TextChoices):
+    ACTIVE = "active", _("Active")
+    EXPIRED = "expired", _("Expired")
+    CANCELED = "canceled", _("Canceled")
+
+
+class AddonDefinition(models.Model):
+    slug = models.SlugField(max_length=50, unique=True, verbose_name=_("Slug"))
+    name = models.CharField(max_length=200, verbose_name=_("Name"))
+    description = models.TextField(blank=True, verbose_name=_("Description"))
+    assignment_scope = models.CharField(
+        max_length=20,
+        choices=AddonAssignmentScope.choices,
+        default=AddonAssignmentScope.ORGANIZER,
+        verbose_name=_("Assignment scope"),
+    )
+    pricing_mode = models.CharField(
+        max_length=20,
+        choices=AddonPricingMode.choices,
+        default=AddonPricingMode.RECURRING,
+        verbose_name=_("Pricing mode"),
+    )
+    currency = models.CharField(max_length=3, default="USD", verbose_name=_("Currency"))
+    price = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0.00, verbose_name=_("Price")
+    )
+    capability = models.CharField(max_length=100, verbose_name=_("Capability"))
+    entitlement_value = models.CharField(
+        max_length=100, blank=True, default="true", verbose_name=_("Entitlement value")
+    )
+    quantity = models.PositiveIntegerField(
+        default=1, verbose_name=_("Included quantity / allowance")
+    )
+    active = models.BooleanField(default=True, verbose_name=_("Active"))
+    public = models.BooleanField(default=True, verbose_name=_("Public"))
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Created at"))
+    updated_at = models.DateTimeField(auto_now=True, verbose_name=_("Updated at"))
+
+    class Meta:
+        ordering = ["name", "slug"]
+        verbose_name = _("Add-on definition")
+        verbose_name_plural = _("Add-on definitions")
+        constraints = [
+            models.CheckConstraint(
+                name="addondefinition_price_nonnegative",
+                condition=models.Q(price__gte=0),
+            ),
+            models.CheckConstraint(
+                name="addondefinition_quantity_positive",
+                condition=models.Q(quantity__gt=0),
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+    def get_typed_value(self):
+        if self.entitlement_value is None or self.entitlement_value == "":
+            return None
+        from .capabilities import CapabilityValueType, get_capability
+
+        cap = get_capability(self.capability)
+        if not cap:
+            return self.entitlement_value
+        if cap.value_type == CapabilityValueType.BOOLEAN:
+            return str(self.entitlement_value).lower() in ("true", "1", "yes")
+        if cap.value_type == CapabilityValueType.INTEGER:
+            try:
+                return int(self.entitlement_value)
+            except (ValueError, TypeError):
+                return 1
+        if cap.value_type in (CapabilityValueType.DECIMAL, CapabilityValueType.MONEY):
+            from decimal import Decimal
+
+            try:
+                return Decimal(self.entitlement_value)
+            except Exception:
+                return Decimal("0")
+        return self.entitlement_value
+
+
+class OrganizerAddon(models.Model):
+    organizer = models.ForeignKey(
+        "base.Organizer",
+        on_delete=models.CASCADE,
+        related_name="business_addons",
+        verbose_name=_("Organizer"),
+    )
+    addon = models.ForeignKey(
+        AddonDefinition,
+        on_delete=models.PROTECT,
+        related_name="organizer_assignments",
+        verbose_name=_("Add-on"),
+    )
+    quantity = models.PositiveIntegerField(default=1, verbose_name=_("Quantity"))
+    starts_at = models.DateTimeField(default=now, verbose_name=_("Starts at"))
+    ends_at = models.DateTimeField(null=True, blank=True, verbose_name=_("Ends at"))
+    status = models.CharField(
+        max_length=20,
+        choices=AddonStatus.choices,
+        default=AddonStatus.ACTIVE,
+        verbose_name=_("Status"),
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Created at"))
+    updated_at = models.DateTimeField(auto_now=True, verbose_name=_("Updated at"))
+
+    class Meta:
+        ordering = ["-starts_at", "-id"]
+        verbose_name = _("Organizer add-on")
+        verbose_name_plural = _("Organizer add-ons")
+
+    def __str__(self):
+        return f"{self.addon.name} for {self.organizer} ({self.status})"
+
+    @property
+    def is_active(self):
+        current = now()
+        if self.status != AddonStatus.ACTIVE:
+            return False
+        if self.starts_at and self.starts_at > current:
+            return False
+        if self.ends_at and self.ends_at < current:
+            return False
+        return True
+
+
+class EventAddon(models.Model):
+    event = models.ForeignKey(
+        "base.Event",
+        on_delete=models.CASCADE,
+        related_name="business_addons",
+        verbose_name=_("Event"),
+    )
+    addon = models.ForeignKey(
+        AddonDefinition,
+        on_delete=models.PROTECT,
+        related_name="event_assignments",
+        verbose_name=_("Add-on"),
+    )
+    quantity = models.PositiveIntegerField(default=1, verbose_name=_("Quantity"))
+    starts_at = models.DateTimeField(default=now, verbose_name=_("Starts at"))
+    ends_at = models.DateTimeField(null=True, blank=True, verbose_name=_("Ends at"))
+    status = models.CharField(
+        max_length=20,
+        choices=AddonStatus.choices,
+        default=AddonStatus.ACTIVE,
+        verbose_name=_("Status"),
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Created at"))
+    updated_at = models.DateTimeField(auto_now=True, verbose_name=_("Updated at"))
+
+    class Meta:
+        ordering = ["-starts_at", "-id"]
+        verbose_name = _("Event add-on")
+        verbose_name_plural = _("Event add-ons")
+
+    def __str__(self):
+        return f"{self.addon.name} for {self.event} ({self.status})"
+
+    @property
+    def is_active(self):
+        current = now()
+        if self.status != AddonStatus.ACTIVE:
+            return False
+        if self.starts_at and self.starts_at > current:
+            return False
+        if self.ends_at and self.ends_at < current:
+            return False
+        return True
