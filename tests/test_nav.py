@@ -90,11 +90,13 @@ def test_business_tiers_nav_staff_on_admin_page():
     )
 
     items = business_tiers_nav(sender=None, request=request)
-    assert len(items) == 2
+    assert len(items) == 3
     assert str(items[0]["label"]) == "Tiers"
     assert str(items[1]["label"]) == "Subscriptions"
+    assert str(items[2]["label"]) == "Add-ons"
     assert items[0]["active"] is False
     assert items[1]["active"] is False
+    assert items[2]["active"] is False
 
 
 def test_business_tiers_nav_staff_on_tiers_list():
@@ -112,6 +114,28 @@ def test_business_tiers_nav_staff_on_tiers_list():
     )
 
     items = business_tiers_nav(sender=None, request=request)
-    assert len(items) == 2
+    assert len(items) == 3
     assert items[0]["active"] is True
     assert items[1]["active"] is False
+    assert items[2]["active"] is False
+
+
+def test_business_tiers_nav_staff_on_addons_list():
+    """Verify that staff on addons list view have Add-ons marked active."""
+    factory = RequestFactory()
+    request = factory.get("/admin/global/business/addons/")
+    request.user = Mock(is_authenticated=True, is_staff=True, is_superuser=False)
+    request.resolver_match = ResolverMatch(
+        func=lambda r: None,
+        args=(),
+        kwargs={},
+        url_name="addons.list",
+        app_names=["plugins:eventyay_business"],
+        namespaces=["plugins:eventyay_business"],
+    )
+
+    items = business_tiers_nav(sender=None, request=request)
+    assert len(items) == 3
+    assert items[0]["active"] is False
+    assert items[1]["active"] is False
+    assert items[2]["active"] is True

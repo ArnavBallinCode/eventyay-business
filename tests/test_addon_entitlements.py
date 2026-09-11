@@ -39,12 +39,17 @@ def test_setup():
         value="false",
     )
 
-    Subscription.objects.create(
-        organizer=organizer,
-        tier_version=version,
-        status=SubscriptionStatus.ACTIVE,
-        starts_at=now() - timedelta(days=1),
-    )
+    sub = organizer.subscriptions.filter(status=SubscriptionStatus.ACTIVE).first()
+    if sub:
+        sub.tier_version = version
+        sub.save()
+    else:
+        Subscription.objects.create(
+            organizer=organizer,
+            tier_version=version,
+            status=SubscriptionStatus.ACTIVE,
+            starts_at=now() - timedelta(days=1),
+        )
     return organizer
 
 
