@@ -1,3 +1,4 @@
+from django.db.models import Sum
 from django.dispatch import receiver
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
@@ -191,11 +192,26 @@ if entitlement_check and EntitlementDecision:
                 )
 
         if cap_def.value_type == CapabilityValueType.INTEGER:
-            if value is not None and quantity > value:
+            total_quantity = quantity
+            if capability.endswith(".monthly"):
+                from .models import UsageRecord
+
+                usage_agg = UsageRecord.objects.filter(
+                    organizer=organizer,
+                    capability=capability,
+                    occurred_at__year=current_time.year,
+                    occurred_at__month=current_time.month,
+                ).aggregate(total=Sum("quantity"))
+
+                past_usage = usage_agg["total"] or 0
+                total_quantity = quantity + int(past_usage)
+
+            if value is not None and total_quantity > value:
                 return EntitlementDecision(
                     allowed=False,
                     reason_code="tier_limit_exceeded",
                     limit=value,
+                    used=past_usage if capability.endswith(".monthly") else None,
                     message="You have reached the maximum limit for this feature on your current plan.",
                 )
             return EntitlementDecision(allowed=True, limit=value)
