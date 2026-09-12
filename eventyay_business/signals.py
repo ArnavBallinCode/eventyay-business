@@ -202,6 +202,7 @@ if entitlement_check and EntitlementDecision:
             OrganizerAddon.objects.filter(
                 organizer=organizer,
                 addon__capability=capability,
+                addon__active=True,
                 status=AddonStatus.ACTIVE,
                 starts_at__lte=current_time,
             )
@@ -215,6 +216,7 @@ if entitlement_check and EntitlementDecision:
                 EventAddon.objects.filter(
                     event=event,
                     addon__capability=capability,
+                    addon__active=True,
                     status=AddonStatus.ACTIVE,
                     starts_at__lte=current_time,
                 )
@@ -239,7 +241,12 @@ if entitlement_check and EntitlementDecision:
 
         if cap_def.value_type == CapabilityValueType.INTEGER:
             addon_allowance = sum(
-                a.quantity * int(a.addon.get_typed_value() or a.addon.quantity or 1)
+                a.quantity
+                * int(
+                    a.addon.get_typed_value()
+                    if a.addon.get_typed_value() is not None
+                    else (a.addon.quantity or 1)
+                )
                 for a in all_active_addons
             )
             if value is not None:

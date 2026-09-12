@@ -169,3 +169,53 @@ def test_event_scoped_addon_entitlement(test_setup):
 
     # Denied when no event is passed
     assert check_entitlement(organizer, "video.loungemesh").allowed is False
+
+
+@pytest.mark.django_db
+def test_deactivated_addon_definition_ignored(test_setup):
+    organizer = test_setup
+
+    addon = AddonDefinition.objects.create(
+        slug="inactive-loungemesh",
+        name="Inactive Loungemesh",
+        capability="video.loungemesh",
+        entitlement_value="true",
+        active=False,
+    )
+    OrganizerAddon.objects.create(
+        organizer=organizer,
+        addon=addon,
+        status=AddonStatus.ACTIVE,
+    )
+
+    # Addon definition is inactive (active=False), so it should not grant entitlement
+    assert check_entitlement(organizer, "video.loungemesh").allowed is False
+
+
+@pytest.mark.django_db
+def test_integer_addon_zero_typed_value(test_setup):
+    organizer = test_setup
+
+    addon = AddonDefinition.objects.create(
+        slug="zero-addon",
+        name="Zero Addon",
+        capability="video.jitsi.concurrent_rooms",
+        entitlement_value="0",
+        quantity=5,  # fallback if get_typed_value was None, but here get_typed_value is 0!
+    )
+    OrganizerAddon.objects.create(
+        organizer=organizer,
+        addon=addon,
+        status=AddonStatus.ACTIVE,
+    )
+
+    # Base tier allows 1 room. Since addon typed value is 0, allowance should be +0 (not +5).
+    # Allowed for qty 1, but denied for qty 2.
+    assert (
+        check_entitlement(organizer, "video.jitsi.concurrent_rooms", quantity=1).allowed
+        is True
+    )
+    assert (
+        check_entitlement(organizer, "video.jitsi.concurrent_rooms", quantity=2).allowed
+        is False
+    )

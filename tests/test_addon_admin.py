@@ -124,3 +124,58 @@ def test_addon_admin_unauthorized(client):
     response = client.get(url)
     # Redirects to login
     assert response.status_code in (302, 403)
+
+
+@pytest.mark.django_db
+def test_addon_create_unknown_capability_rejected(business_admin_client):
+    url = reverse("plugins:eventyay_business:addons.create")
+    response = business_admin_client.post(
+        url,
+        {
+            "name": "Unknown Capability Addon",
+            "slug": "unknown-cap-addon",
+            "assignment_scope": AddonAssignmentScope.ORGANIZER,
+            "pricing_mode": AddonPricingMode.RECURRING,
+            "currency": "USD",
+            "price": "10.00",
+            "capability": "unknown.capability.name",
+            "entitlement_value": "true",
+            "quantity": "1",
+            "active": "on",
+        },
+    )
+    assert response.status_code == 200
+    assert "Unknown capability: unknown.capability.name" in response.content.decode()
+    assert not AddonDefinition.objects.filter(slug="unknown-cap-addon").exists()
+
+
+@pytest.mark.django_db
+def test_addon_legacy_unchanged_capability_allowed(business_admin_client):
+    addon = AddonDefinition.objects.create(
+        name="Legacy Addon",
+        slug="legacy-addon",
+        capability="legacy.unregistered.cap",
+        entitlement_value="true",
+        price=Decimal("10.00"),
+    )
+    url = reverse("plugins:eventyay_business:addons.edit", kwargs={"pk": addon.pk})
+    # Submitting with unchanged capability is allowed
+    response = business_admin_client.post(
+        url,
+        {
+            "name": "Legacy Addon Renamed",
+            "slug": "legacy-addon",
+            "assignment_scope": AddonAssignmentScope.ORGANIZER,
+            "pricing_mode": AddonPricingMode.RECURRING,
+            "currency": "USD",
+            "price": "20.00",
+            "capability": "legacy.unregistered.cap",
+            "entitlement_value": "true",
+            "quantity": "1",
+            "active": "on",
+        },
+    )
+    assert response.status_code == 302
+    addon.refresh_from_db()
+    assert addon.name == "Legacy Addon Renamed"
+    assert addon.price == Decimal("20.00")

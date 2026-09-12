@@ -217,11 +217,24 @@ class AddonDefinitionForm(forms.ModelForm):
         capability_name = cleaned_data.get("capability")
         value = cleaned_data.get("entitlement_value")
 
-        if capability_name and value:
+        if capability_name:
             from .capabilities import CapabilityValueType, get_capability
 
             cap = get_capability(capability_name)
-            if cap:
+            is_existing_unchanged = (
+                self.instance
+                and self.instance.pk
+                and self.instance.capability == capability_name
+            )
+            if not cap and not is_existing_unchanged:
+                self.add_error(
+                    "capability",
+                    forms.ValidationError(
+                        _("Unknown capability: %(name)s"),
+                        params={"name": capability_name},
+                    ),
+                )
+            elif cap and value:
                 if cap.value_type == CapabilityValueType.INTEGER:
                     try:
                         int(value)
