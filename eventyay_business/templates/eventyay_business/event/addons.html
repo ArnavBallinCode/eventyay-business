@@ -1,0 +1,162 @@
+{% extends "pretixcontrol/event/base.html" %}
+{% load i18n %}
+{% load bootstrap3 %}
+
+{% block title %}{% trans "Add-ons & Modules" %} - {{ request.event.name }}{% endblock %}
+
+{% block content %}
+    <h1>
+        {% trans "Add-ons & Modules" %}
+        <small>{{ request.event.name }}</small>
+    </h1>
+
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <h3 class="panel-title">
+                <i class="fa fa-fw fa-puzzle-piece"></i>
+                {% trans "Active Event Add-ons" %}
+            </h3>
+        </div>
+        <div class="panel-body">
+            <p class="text-muted" style="margin: 0;">
+                {% trans "Features, capability extensions, and modules currently active for this event." %}
+            </p>
+        </div>
+        {% if active_addons %}
+            <div class="table-responsive">
+                <table class="table table-hover table-striped" style="margin: 0;">
+                    <thead>
+                        <tr>
+                            <th>{% trans "Add-on Name" %}</th>
+                            <th>{% trans "Capability / Feature" %}</th>
+                            <th>{% trans "Allowance / Units" %}</th>
+                            <th>{% trans "Activated" %}</th>
+                            <th>{% trans "Expires / Duration" %}</th>
+                            <th class="text-right">{% trans "Status" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for addon in active_addons %}
+                            <tr>
+                                <td>
+                                    <strong>{{ addon.addon.name }}</strong>
+                                    {% if addon.addon.description %}
+                                        <div class="help-block text-muted" style="margin: 2px 0 0; font-size: 12px;">
+                                            {{ addon.addon.description }}
+                                        </div>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <code>{{ addon.capability }}</code>
+                                </td>
+                                <td>
+                                    <strong>{{ addon.entitlement_value }}</strong>
+                                    {% if addon.quantity > 1 %}
+                                        <span class="text-muted">(x{{ addon.quantity }})</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {{ addon.starts_at|date:"SHORT_DATETIME_FORMAT" }}
+                                </td>
+                                <td>
+                                    {% if addon.ends_at %}
+                                        {{ addon.ends_at|date:"SHORT_DATETIME_FORMAT" }}
+                                    {% else %}
+                                        <span class="text-muted">{% trans "No expiration" %}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-right">
+                                    {% if addon.status == "active" %}
+                                        <span class="label label-success">{% trans "Active" %}</span>
+                                    {% elif addon.status == "expired" %}
+                                        <span class="label label-default">{% trans "Expired" %}</span>
+                                    {% else %}
+                                        <span class="label label-warning">{{ addon.get_status_display }}</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="panel-body text-muted">
+                <i class="fa fa-info-circle"></i> {% trans "No event-specific add-ons are currently active for this event." %}
+            </div>
+        {% endif %}
+    </div>
+
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <h3 class="panel-title">
+                <i class="fa fa-fw fa-shopping-bag"></i>
+                {% trans "Available Event Add-ons" %}
+            </h3>
+        </div>
+        <div class="panel-body">
+            <p class="text-muted" style="margin: 0;">
+                {% trans "Extend this event with optional event-level features and capabilities." %}
+            </p>
+        </div>
+        {% if available_addons %}
+            <div class="table-responsive">
+                <table class="table table-hover table-striped" style="margin: 0;">
+                    <thead>
+                        <tr>
+                            <th>{% trans "Add-on" %}</th>
+                            <th>{% trans "Feature / Allowance" %}</th>
+                            <th>{% trans "Price" %}</th>
+                            <th class="text-right">{% trans "Action" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for addon in available_addons %}
+                            <tr>
+                                <td>
+                                    <strong>{{ addon.name }}</strong>
+                                    {% if addon.description %}
+                                        <div class="help-block text-muted" style="margin: 2px 0 0; font-size: 12px;">
+                                            {{ addon.description }}
+                                        </div>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <code>{{ addon.capability }}</code>
+                                    <br>
+                                    <small class="text-muted">
+                                        {% trans "Grants:" %} {{ addon.entitlement_value }}
+                                        {% if addon.quantity > 1 %}(x{{ addon.quantity }}){% endif %}
+                                    </small>
+                                </td>
+                                <td>
+                                    {% if addon.price %}
+                                        <strong>{{ addon.price }} {{ addon.currency }}</strong>
+                                        <br>
+                                        <small class="text-muted">{{ addon.get_pricing_mode_display }}</small>
+                                    {% else %}
+                                        <span class="label label-success">{% trans "Free" %}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-right">
+                                    {% if addon.is_active_for_event and addon.active_assignment.entitlement_value == "true" %}
+                                        <button class="btn btn-default btn-sm" disabled>
+                                            <i class="fa fa-check text-success"></i> {% trans "Active" %}
+                                        </button>
+                                    {% else %}
+                                        <a href="{% url 'plugins:eventyay_business:event.addon.purchase' organizer=request.organizer.slug event=request.event.slug pk=addon.pk %}" class="btn btn-primary btn-sm">
+                                            <i class="fa fa-plus"></i> {% trans "Enable for this Event" %}
+                                        </a>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="panel-body text-muted">
+                {% trans "There are currently no additional event-level add-ons available for self-service purchase." %}
+            </div>
+        {% endif %}
+    </div>
+{% endblock %}

@@ -8,10 +8,15 @@ from django.utils.translation import gettext_lazy as _
 logger = logging.getLogger(__name__)
 
 try:
-    from eventyay.control.signals import nav_global, nav_organizer
+    from eventyay.control.signals import (
+        nav_event_settings,
+        nav_global,
+        nav_organizer,
+    )
 except ImportError:
     nav_global = None
     nav_organizer = None
+    nav_event_settings = None
 
 try:
     from eventyay.base.entitlements import EntitlementDecision
@@ -310,6 +315,49 @@ if nav_organizer:
                 ),
                 "icon": "credit-card",
                 "position": 100,
+            }
+        ]
+
+
+if nav_event_settings:
+
+    @receiver(nav_event_settings, dispatch_uid="business_event_addons_nav")
+    def business_event_addons_nav(sender, request, **kwargs):
+        url = getattr(request, "resolver_match", None)
+        if not url:
+            return []
+
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return []
+
+        organizer = getattr(request, "organizer", None) or getattr(
+            sender, "organizer", None
+        )
+        event = getattr(request, "event", None) or sender
+        if not organizer or not event:
+            return []
+
+        if not user.has_event_permission(
+            organizer, event, "can_change_event_settings", request=request
+        ):
+            return []
+
+        return [
+            {
+                "label": _("Add-ons & Modules"),
+                "url": reverse(
+                    "plugins:eventyay_business:event.addons",
+                    kwargs={
+                        "organizer": organizer.slug,
+                        "event": event.slug,
+                    },
+                ),
+                "active": (
+                    url.namespace == "plugins:eventyay_business"
+                    and url.url_name.startswith("event.addon")
+                ),
+                "icon": "puzzle-piece",
             }
         ]
 
