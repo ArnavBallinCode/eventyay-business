@@ -129,3 +129,74 @@ def test_event_addon_assignment_lifecycle():
     ea.status = AddonStatus.EXPIRED
     ea.save()
     assert ea.is_active is False
+
+
+@pytest.mark.django_db
+def test_addon_assignment_snapshots_and_grandfathering():
+    from eventyay_business.services import migrate_addon_assignments
+
+    organizer = Organizer.objects.create(name="Grandfathered Org", slug="gf-org")
+    event = Event.objects.create(
+        organizer=organizer, name="GF Event", slug="gf-event", date_from=now()
+    )
+
+    addon = AddonDefinition.objects.create(
+        slug="jitsi-rooms",
+        name="Jitsi Rooms",
+        capability="video.jitsi.concurrent_rooms",
+        entitlement_value="3",
+        price=Decimal("15.00"),
+        currency="USD",
+    )
+
+    oa = OrganizerAddon.objects.create(organizer=organizer, addon=addon, quantity=1)
+    ea = EventAddon.objects.create(event=event, addon=addon, quantity=1)
+
+    # Check snapshots were automatically set from addon
+    assert oa.capability == "video.jitsi.concurrent_rooms"
+    assert oa.entitlement_value == "3"
+    assert oa.price == Decimal("15.00")
+    assert oa.currency == "USD"
+    assert oa.get_typed_value() == 3
+
+    assert ea.capability == "video.jitsi.concurrent_rooms"
+    assert ea.entitlement_value == "3"
+    assert ea.price == Decimal("15.00")
+    assert ea.currency == "USD"
+    assert ea.get_typed_value() == 3
+
+    # Now modify AddonDefinition
+    addon.capability = "video.jitsi.concurrent_rooms"
+    addon.entitlement_value = "5"
+    addon.price = Decimal("25.00")
+    addon.currency = "EUR"
+    addon.save()
+
+    # Grandfathered assignments retain previous snapshots
+    oa.refresh_from_db()
+    ea.refresh_from_db()
+    assert oa.entitlement_value == "3"
+    assert oa.price == Decimal("15.00")
+    assert oa.currency == "USD"
+    assert oa.get_typed_value() == 3
+
+    assert ea.entitlement_value == "3"
+    assert ea.price == Decimal("15.00")
+    assert ea.currency == "USD"
+    assert ea.get_typed_value() == 3
+
+    # Now call migration service
+    migrated_count = migrate_addon_assignments(addon)
+    assert migrated_count == 2
+
+    oa.refresh_from_db()
+    ea.refresh_from_db()
+    assert oa.entitlement_value == "5"
+    assert oa.price == Decimal("25.00")
+    assert oa.currency == "EUR"
+    assert oa.get_typed_value() == 5
+
+    assert ea.entitlement_value == "5"
+    assert ea.price == Decimal("25.00")
+    assert ea.currency == "EUR"
+    assert ea.get_typed_value() == 5

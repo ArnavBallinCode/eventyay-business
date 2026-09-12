@@ -41,7 +41,7 @@ from .models import (
     TierStatus,
     TierVersion,
 )
-from .services import migrate_tier_subscribers
+from .services import migrate_addon_assignments, migrate_tier_subscribers
 
 
 class TierListView(AdministratorPermissionRequiredMixin, ListView):
@@ -425,7 +425,17 @@ class AddonDefinitionUpdateView(AdministratorPermissionRequiredMixin, UpdateView
 
     def form_valid(self, form):
         self.object = form.save()
-        messages.success(self.request, _("Add-on updated successfully."))
+        if form.cleaned_data.get("update_existing_assignments"):
+            count = migrate_addon_assignments(self.object)
+            messages.success(
+                self.request,
+                _(
+                    "Add-on updated successfully and %(count)d existing active assignment(s) updated."
+                )
+                % {"count": count},
+            )
+        else:
+            messages.success(self.request, _("Add-on updated successfully."))
         return redirect("plugins:eventyay_business:addons.list")
 
 

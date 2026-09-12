@@ -403,6 +403,22 @@ class OrganizerAddon(models.Model):
         verbose_name=_("Add-on"),
     )
     quantity = models.PositiveIntegerField(default=1, verbose_name=_("Quantity"))
+    capability = models.CharField(
+        max_length=100, blank=True, verbose_name=_("Capability snapshot")
+    )
+    entitlement_value = models.CharField(
+        max_length=100, blank=True, verbose_name=_("Entitlement value snapshot")
+    )
+    price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name=_("Price snapshot"),
+    )
+    currency = models.CharField(
+        max_length=3, blank=True, verbose_name=_("Currency snapshot")
+    )
     starts_at = models.DateTimeField(default=now, verbose_name=_("Starts at"))
     ends_at = models.DateTimeField(null=True, blank=True, verbose_name=_("Ends at"))
     status = models.CharField(
@@ -422,6 +438,18 @@ class OrganizerAddon(models.Model):
     def __str__(self):
         return f"{self.addon.name} for {self.organizer} ({self.status})"
 
+    def save(self, *args, **kwargs):
+        if self.addon_id:
+            if not self.capability:
+                self.capability = self.addon.capability
+            if not self.entitlement_value:
+                self.entitlement_value = self.addon.entitlement_value
+            if self.price is None:
+                self.price = self.addon.price
+            if not self.currency:
+                self.currency = self.addon.currency
+        super().save(*args, **kwargs)
+
     @property
     def is_active(self):
         current = now()
@@ -432,6 +460,36 @@ class OrganizerAddon(models.Model):
         if self.ends_at and self.ends_at < current:
             return False
         return True
+
+    def get_typed_value(self):
+        val = (
+            self.entitlement_value
+            if self.entitlement_value != ""
+            else self.addon.entitlement_value
+        )
+        if val is None or val == "":
+            return None
+        from .capabilities import CapabilityValueType, get_capability
+
+        cap_name = self.capability or self.addon.capability
+        cap = get_capability(cap_name)
+        if not cap:
+            return val
+        if cap.value_type == CapabilityValueType.BOOLEAN:
+            return str(val).lower() in ("true", "1", "yes")
+        if cap.value_type == CapabilityValueType.INTEGER:
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                return 1
+        if cap.value_type in (CapabilityValueType.DECIMAL, CapabilityValueType.MONEY):
+            from decimal import Decimal
+
+            try:
+                return Decimal(val)
+            except Exception:
+                return Decimal("0")
+        return val
 
 
 class EventAddon(models.Model):
@@ -448,6 +506,22 @@ class EventAddon(models.Model):
         verbose_name=_("Add-on"),
     )
     quantity = models.PositiveIntegerField(default=1, verbose_name=_("Quantity"))
+    capability = models.CharField(
+        max_length=100, blank=True, verbose_name=_("Capability snapshot")
+    )
+    entitlement_value = models.CharField(
+        max_length=100, blank=True, verbose_name=_("Entitlement value snapshot")
+    )
+    price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name=_("Price snapshot"),
+    )
+    currency = models.CharField(
+        max_length=3, blank=True, verbose_name=_("Currency snapshot")
+    )
     starts_at = models.DateTimeField(default=now, verbose_name=_("Starts at"))
     ends_at = models.DateTimeField(null=True, blank=True, verbose_name=_("Ends at"))
     status = models.CharField(
@@ -467,6 +541,18 @@ class EventAddon(models.Model):
     def __str__(self):
         return f"{self.addon.name} for {self.event} ({self.status})"
 
+    def save(self, *args, **kwargs):
+        if self.addon_id:
+            if not self.capability:
+                self.capability = self.addon.capability
+            if not self.entitlement_value:
+                self.entitlement_value = self.addon.entitlement_value
+            if self.price is None:
+                self.price = self.addon.price
+            if not self.currency:
+                self.currency = self.addon.currency
+        super().save(*args, **kwargs)
+
     @property
     def is_active(self):
         current = now()
@@ -477,3 +563,33 @@ class EventAddon(models.Model):
         if self.ends_at and self.ends_at < current:
             return False
         return True
+
+    def get_typed_value(self):
+        val = (
+            self.entitlement_value
+            if self.entitlement_value != ""
+            else self.addon.entitlement_value
+        )
+        if val is None or val == "":
+            return None
+        from .capabilities import CapabilityValueType, get_capability
+
+        cap_name = self.capability or self.addon.capability
+        cap = get_capability(cap_name)
+        if not cap:
+            return val
+        if cap.value_type == CapabilityValueType.BOOLEAN:
+            return str(val).lower() in ("true", "1", "yes")
+        if cap.value_type == CapabilityValueType.INTEGER:
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                return 1
+        if cap.value_type in (CapabilityValueType.DECIMAL, CapabilityValueType.MONEY):
+            from decimal import Decimal
+
+            try:
+                return Decimal(val)
+            except Exception:
+                return Decimal("0")
+        return val

@@ -219,3 +219,63 @@ def test_integer_addon_zero_typed_value(test_setup):
         check_entitlement(organizer, "video.jitsi.concurrent_rooms", quantity=2).allowed
         is False
     )
+
+
+@pytest.mark.django_db
+def test_addon_grandfathered_entitlements_and_migration(test_setup):
+    from eventyay_business.services import migrate_addon_assignments
+
+    organizer = test_setup
+    # Base tier allows 1 room
+
+    addon = AddonDefinition.objects.create(
+        slug="jitsi-extra",
+        name="Jitsi 2 Extra Rooms",
+        capability="video.jitsi.concurrent_rooms",
+        entitlement_value="2",
+    )
+    oa = OrganizerAddon.objects.create(
+        organizer=organizer,
+        addon=addon,
+        status=AddonStatus.ACTIVE,
+    )
+    # Total rooms allowed = 1 (base) + 2 (addon) = 3
+    assert (
+        check_entitlement(organizer, "video.jitsi.concurrent_rooms", quantity=3).allowed
+        is True
+    )
+    assert (
+        check_entitlement(organizer, "video.jitsi.concurrent_rooms", quantity=4).allowed
+        is False
+    )
+
+    # Now edit addon definition to 5 rooms without migrating
+    addon.entitlement_value = "5"
+    addon.save()
+
+    # The organizer's assignment is grandfathered with snapshot value 2
+    oa.refresh_from_db()
+    assert oa.entitlement_value == "2"
+    assert (
+        check_entitlement(organizer, "video.jitsi.concurrent_rooms", quantity=3).allowed
+        is True
+    )
+    assert (
+        check_entitlement(organizer, "video.jitsi.concurrent_rooms", quantity=4).allowed
+        is False
+    )
+
+    # Now migrate assignments
+    migrate_addon_assignments(addon)
+    oa.refresh_from_db()
+    assert oa.entitlement_value == "5"
+
+    # Total rooms allowed = 1 + 5 = 6
+    assert (
+        check_entitlement(organizer, "video.jitsi.concurrent_rooms", quantity=6).allowed
+        is True
+    )
+    assert (
+        check_entitlement(organizer, "video.jitsi.concurrent_rooms", quantity=7).allowed
+        is False
+    )
