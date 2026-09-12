@@ -1,0 +1,18 @@
+{% load i18n %}
+<ul class="nav nav-tabs" style="margin-bottom: 20px;">
+    <li class="{% if active_tab == 'definitions' %}active{% endif %}">
+        <a href="{% url 'plugins:eventyay_business:addons.list' %}">
+            <i class="fa fa-cubes"></i> {% trans "Definitions" %}
+        </a>
+    </li>
+    <li class="{% if active_tab == 'organizers' %}active{% endif %}">
+        <a href="{% url 'plugins:eventyay_business:addons.assignments.organizer.list' %}">
+            <i class="fa fa-building-o"></i> {% trans "Organizer Assignments" %}
+        </a>
+    </li>
+    <li class="{% if active_tab == 'events' %}active{% endif %}">
+        <a href="{% url 'plugins:eventyay_business:addons.assignments.event.list' %}">
+            <i class="fa fa-calendar"></i> {% trans "Event Assignments" %}
+        </a>
+    </li>
+</ul>

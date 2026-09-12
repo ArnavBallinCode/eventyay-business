@@ -1,0 +1,57 @@
+{% extends "pretixcontrol/admin/base.html" %}
+{% load i18n %}
+{% load bootstrap3 %}
+
+{% block title %}
+    {% if object %}
+        {% if assignment_type == "event" %}
+            {% trans "Edit event add-on assignment" %}
+        {% else %}
+            {% trans "Edit organizer add-on assignment" %}
+        {% endif %}
+    {% else %}
+        {% if assignment_type == "event" %}
+            {% trans "Assign add-on to event" %}
+        {% else %}
+            {% trans "Assign add-on to organizer" %}
+        {% endif %}
+    {% endif %}
+{% endblock %}
+
+{% block content %}
+    <h1>
+        {% if object %}
+            {% if assignment_type == "event" %}
+                {% trans "Edit Event Add-on Assignment" %}
+            {% else %}
+                {% trans "Edit Organizer Add-on Assignment" %}
+            {% endif %}
+        {% else %}
+            {% if assignment_type == "event" %}
+                {% trans "Assign Add-on to Event" %}
+            {% else %}
+                {% trans "Assign Add-on to Organizer" %}
+            {% endif %}
+        {% endif %}
+    </h1>
+
+    <form method="post" class="form-horizontal">
+        {% csrf_token %}
+        {% bootstrap_form form layout='horizontal' %}
+        
+        <div class="form-group submit-group">
+            <button type="submit" class="btn btn-primary btn-save">
+                {% trans "Save" %}
+            </button>
+            {% if assignment_type == "event" %}
+                <a href="{% url "plugins:eventyay_business:addons.assignments.event.list" %}" class="btn btn-default btn-cancel">
+                    {% trans "Cancel" %}
+                </a>
+            {% else %}
+                <a href="{% url "plugins:eventyay_business:addons.assignments.organizer.list" %}" class="btn btn-default btn-cancel">
+                    {% trans "Cancel" %}
+                </a>
+            {% endif %}
+        </div>
+    </form>
+{% endblock %}

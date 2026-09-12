@@ -23,6 +23,8 @@ from eventyay.control.views.organizer_views.organizer_detail_view_mixin import (
 from .capabilities import get_all_capabilities
 from .forms import (
     AddonDefinitionForm,
+    EventAddonForm,
+    OrganizerAddonForm,
     SubscriptionAdminForm,
     TierEntitlementFormSet,
     TierForm,
@@ -439,3 +441,89 @@ class AddonDefinitionToggleActiveView(AdministratorPermissionRequiredMixin, View
             % {"name": addon.name, "status": status_text},
         )
         return redirect("plugins:eventyay_business:addons.list")
+
+
+class OrganizerAddonListView(AdministratorPermissionRequiredMixin, ListView):
+    model = OrganizerAddon
+    template_name = "eventyay_business/addons/assignments/organizer_list.html"
+    context_object_name = "assignments"
+
+    def get_queryset(self):
+        return OrganizerAddon.objects.select_related("organizer", "addon").order_by(
+            "-starts_at", "-id"
+        )
+
+
+class OrganizerAddonCreateView(AdministratorPermissionRequiredMixin, CreateView):
+    model = OrganizerAddon
+    form_class = OrganizerAddonForm
+    template_name = "eventyay_business/addons/assignments/form.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["assignment_type"] = "organizer"
+        return ctx
+
+    def form_valid(self, form):
+        self.object = form.save()
+        messages.success(self.request, _("Organizer add-on assigned successfully."))
+        return redirect("plugins:eventyay_business:addons.assignments.organizer.list")
+
+
+class OrganizerAddonUpdateView(AdministratorPermissionRequiredMixin, UpdateView):
+    model = OrganizerAddon
+    form_class = OrganizerAddonForm
+    template_name = "eventyay_business/addons/assignments/form.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["assignment_type"] = "organizer"
+        return ctx
+
+    def form_valid(self, form):
+        self.object = form.save()
+        messages.success(self.request, _("Organizer add-on assignment updated."))
+        return redirect("plugins:eventyay_business:addons.assignments.organizer.list")
+
+
+class EventAddonListView(AdministratorPermissionRequiredMixin, ListView):
+    model = EventAddon
+    template_name = "eventyay_business/addons/assignments/event_list.html"
+    context_object_name = "assignments"
+
+    def get_queryset(self):
+        return EventAddon.objects.select_related(
+            "event", "event__organizer", "addon"
+        ).order_by("-starts_at", "-id")
+
+
+class EventAddonCreateView(AdministratorPermissionRequiredMixin, CreateView):
+    model = EventAddon
+    form_class = EventAddonForm
+    template_name = "eventyay_business/addons/assignments/form.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["assignment_type"] = "event"
+        return ctx
+
+    def form_valid(self, form):
+        self.object = form.save()
+        messages.success(self.request, _("Event add-on assigned successfully."))
+        return redirect("plugins:eventyay_business:addons.assignments.event.list")
+
+
+class EventAddonUpdateView(AdministratorPermissionRequiredMixin, UpdateView):
+    model = EventAddon
+    form_class = EventAddonForm
+    template_name = "eventyay_business/addons/assignments/form.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["assignment_type"] = "event"
+        return ctx
+
+    def form_valid(self, form):
+        self.object = form.save()
+        messages.success(self.request, _("Event add-on assignment updated."))
+        return redirect("plugins:eventyay_business:addons.assignments.event.list")

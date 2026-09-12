@@ -290,6 +290,17 @@ class OrganizerAddonForm(forms.ModelForm):
             "ends_at": SplitDateTimePickerWidget(),
         }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from .models import AddonAssignmentScope, AddonDefinition
+
+        qs = AddonDefinition.objects.filter(
+            assignment_scope=AddonAssignmentScope.ORGANIZER
+        )
+        if self.instance and self.instance.pk and self.instance.addon_id:
+            qs = qs | AddonDefinition.objects.filter(pk=self.instance.addon_id)
+        self.fields["addon"].queryset = qs.distinct()
+
 
 class EventAddonForm(forms.ModelForm):
     class Meta:
@@ -303,3 +314,12 @@ class EventAddonForm(forms.ModelForm):
             "starts_at": SplitDateTimePickerWidget(),
             "ends_at": SplitDateTimePickerWidget(),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from .models import AddonAssignmentScope, AddonDefinition
+
+        qs = AddonDefinition.objects.filter(assignment_scope=AddonAssignmentScope.EVENT)
+        if self.instance and self.instance.pk and self.instance.addon_id:
+            qs = qs | AddonDefinition.objects.filter(pk=self.instance.addon_id)
+        self.fields["addon"].queryset = qs.distinct()

@@ -77,6 +77,37 @@ urlpatterns = [
         views.AddonDefinitionToggleActiveView.as_view(),
         name="addons.toggle",
     ),
+    # Add-on Assignments
+    path(
+        "admin/global/business/addons/assignments/organizers/",
+        views.OrganizerAddonListView.as_view(),
+        name="addons.assignments.organizer.list",
+    ),
+    path(
+        "admin/global/business/addons/assignments/organizers/create/",
+        views.OrganizerAddonCreateView.as_view(),
+        name="addons.assignments.organizer.create",
+    ),
+    path(
+        "admin/global/business/addons/assignments/organizers/<int:pk>/edit/",
+        views.OrganizerAddonUpdateView.as_view(),
+        name="addons.assignments.organizer.edit",
+    ),
+    path(
+        "admin/global/business/addons/assignments/events/",
+        views.EventAddonListView.as_view(),
+        name="addons.assignments.event.list",
+    ),
+    path(
+        "admin/global/business/addons/assignments/events/create/",
+        views.EventAddonCreateView.as_view(),
+        name="addons.assignments.event.create",
+    ),
+    path(
+        "admin/global/business/addons/assignments/events/<int:pk>/edit/",
+        views.EventAddonUpdateView.as_view(),
+        name="addons.assignments.event.edit",
+    ),
     # Organizer URLs
     path(
         "control/organizer/<str:organizer>/business/plan/",
