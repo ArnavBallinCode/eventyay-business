@@ -7,6 +7,7 @@ from django.utils.timezone import now
 from eventyay.base.entitlements import check_entitlement
 from eventyay.base.models import Event, Organizer, Team, User
 from eventyay.base.models.auth import StaffSession
+from unittest.mock import MagicMock
 
 from eventyay_business.models import (
     AddonAssignmentScope,
@@ -15,6 +16,7 @@ from eventyay_business.models import (
     EventAddon,
     OrganizerAddon,
 )
+from eventyay_business.signals import addon_canceled
 from eventyay_business.tasks import (
     expire_addon_assignments,
     expire_addon_assignments_task,
@@ -111,7 +113,7 @@ def test_organizer_addon_cancel_period_end(setup_data):
 
     assert addon.status == AddonStatus.ACTIVE
     assert addon.cancel_at == period_end
-    assert addon.canceled_at is not None
+    assert addon.canceled_at is None
     # Still active because cancel_at is in the future
     assert addon.is_active is True
 
@@ -131,6 +133,7 @@ def test_organizer_addon_cancel_continuous_without_ends_at(setup_data):
     # When no ends_at, immediate cancellation occurs
     assert addon.status == AddonStatus.CANCELED
     assert addon.cancel_at is not None
+    assert addon.canceled_at is not None
     assert addon.is_active is False
 
 
@@ -153,12 +156,14 @@ def test_event_addon_cancel_immediate_and_period_end(setup_data):
     addon.refresh_from_db()
     assert addon.status == AddonStatus.ACTIVE
     assert addon.cancel_at == period_end
+    assert addon.canceled_at is None
     assert addon.is_active is True
 
     # Immediate cancel
     addon.cancel(immediate=True)
     addon.refresh_from_db()
     assert addon.status == AddonStatus.CANCELED
+    assert addon.canceled_at is not None
     assert addon.is_active is False
 
 
@@ -242,18 +247,27 @@ def test_organizer_addon_cancel_view_get_and_post(business_admin_client, setup_d
     assert resp.status_code == 200
     assert "Confirm Cancellation" in resp.content.decode()
 
-    # POST with immediate=0 schedules cancellation at period end
-    resp = business_admin_client.post(url, {"immediate": "0"})
-    assert resp.status_code == 302
-    addon.refresh_from_db()
-    assert addon.status == AddonStatus.ACTIVE
-    assert addon.cancel_at == period_end
+    signal_mock = MagicMock()
+    addon_canceled.connect(signal_mock)
+    try:
+        # POST with immediate=0 schedules cancellation at period end
+        resp = business_admin_client.post(url, {"immediate": "0"})
+        assert resp.status_code == 302
+        addon.refresh_from_db()
+        assert addon.status == AddonStatus.ACTIVE
+        assert addon.cancel_at == period_end
+        assert addon.canceled_at is None
+        assert signal_mock.call_count == 0
 
-    # POST with immediate=1 cancels immediately
-    resp = business_admin_client.post(url, {"immediate": "1"})
-    assert resp.status_code == 302
-    addon.refresh_from_db()
-    assert addon.status == AddonStatus.CANCELED
+        # POST with immediate=1 cancels immediately
+        resp = business_admin_client.post(url, {"immediate": "1"})
+        assert resp.status_code == 302
+        addon.refresh_from_db()
+        assert addon.status == AddonStatus.CANCELED
+        assert addon.canceled_at is not None
+        assert signal_mock.call_count == 1
+    finally:
+        addon_canceled.disconnect(signal_mock)
 
 
 @pytest.mark.django_db
@@ -280,11 +294,27 @@ def test_event_addon_cancel_view_get_and_post(business_admin_client, setup_data)
     assert resp.status_code == 200
     assert "Confirm Cancellation" in resp.content.decode()
 
-    # POST with immediate=1 cancels immediately
-    resp = business_admin_client.post(url, {"immediate": "1"})
-    assert resp.status_code == 302
-    addon.refresh_from_db()
-    assert addon.status == AddonStatus.CANCELED
+    signal_mock = MagicMock()
+    addon_canceled.connect(signal_mock)
+    try:
+        # POST with immediate=0 schedules cancellation
+        resp = business_admin_client.post(url, {"immediate": "0"})
+        assert resp.status_code == 302
+        addon.refresh_from_db()
+        assert addon.status == AddonStatus.ACTIVE
+        assert addon.cancel_at == period_end
+        assert addon.canceled_at is None
+        assert signal_mock.call_count == 0
+
+        # POST with immediate=1 cancels immediately
+        resp = business_admin_client.post(url, {"immediate": "1"})
+        assert resp.status_code == 302
+        addon.refresh_from_db()
+        assert addon.status == AddonStatus.CANCELED
+        assert addon.canceled_at is not None
+        assert signal_mock.call_count == 1
+    finally:
+        addon_canceled.disconnect(signal_mock)
 
 
 @pytest.mark.django_db
@@ -331,25 +361,50 @@ def test_admin_revoke_actions(business_admin_client, setup_data):
         status=AddonStatus.ACTIVE,
     )
 
-    # Revoke organizer addon
-    org_revoke_url = reverse(
-        "plugins:eventyay_business:addons.assignments.organizer.revoke",
-        kwargs={"pk": org_addon.pk},
-    )
-    resp = business_admin_client.post(org_revoke_url)
-    assert resp.status_code == 302
-    org_addon.refresh_from_db()
-    assert org_addon.status == AddonStatus.CANCELED
+    signal_mock = MagicMock()
+    addon_canceled.connect(signal_mock)
+    try:
+        # Revoke organizer addon
+        org_revoke_url = reverse(
+            "plugins:eventyay_business:addons.assignments.organizer.revoke",
+            kwargs={"pk": org_addon.pk},
+        )
+        resp = business_admin_client.post(org_revoke_url)
+        assert resp.status_code == 302
+        org_addon.refresh_from_db()
+        assert org_addon.status == AddonStatus.CANCELED
+        assert org_addon.canceled_at is not None
+        first_canceled_at = org_addon.canceled_at
+        assert signal_mock.call_count == 1
 
-    # Revoke event addon
-    event_revoke_url = reverse(
-        "plugins:eventyay_business:addons.assignments.event.revoke",
-        kwargs={"pk": event_addon.pk},
-    )
-    resp = business_admin_client.post(event_revoke_url)
-    assert resp.status_code == 302
-    event_addon.refresh_from_db()
-    assert event_addon.status == AddonStatus.CANCELED
+        # Second revoke attempt should be idempotent and rejected as already inactive
+        resp = business_admin_client.post(org_revoke_url)
+        assert resp.status_code == 302
+        org_addon.refresh_from_db()
+        assert org_addon.canceled_at == first_canceled_at
+        assert signal_mock.call_count == 1  # No duplicate signal
+
+        # Revoke event addon
+        event_revoke_url = reverse(
+            "plugins:eventyay_business:addons.assignments.event.revoke",
+            kwargs={"pk": event_addon.pk},
+        )
+        resp = business_admin_client.post(event_revoke_url)
+        assert resp.status_code == 302
+        event_addon.refresh_from_db()
+        assert event_addon.status == AddonStatus.CANCELED
+        assert event_addon.canceled_at is not None
+        event_first_canceled_at = event_addon.canceled_at
+        assert signal_mock.call_count == 2
+
+        # Second revoke attempt on event addon should also be idempotent
+        resp = business_admin_client.post(event_revoke_url)
+        assert resp.status_code == 302
+        event_addon.refresh_from_db()
+        assert event_addon.canceled_at == event_first_canceled_at
+        assert signal_mock.call_count == 2  # No duplicate signal
+    finally:
+        addon_canceled.disconnect(signal_mock)
 
 
 @pytest.mark.django_db
@@ -413,9 +468,11 @@ def test_expire_addon_assignments_task(setup_data):
     ea_expired.refresh_from_db()
 
     assert oa_canceled.status == AddonStatus.CANCELED
+    assert oa_canceled.canceled_at is not None
     assert oa_expired.status == AddonStatus.EXPIRED
     assert oa_active.status == AddonStatus.ACTIVE
     assert ea_canceled.status == AddonStatus.CANCELED
+    assert ea_canceled.canceled_at is not None
     assert ea_expired.status == AddonStatus.EXPIRED
 
     # Also test periodic function wrapper and Celery task execution

@@ -563,16 +563,30 @@ class OrganizerAddonCancelView(OrganizerPermissionRequiredMixin, TemplateView):
                 )
 
             assignment.cancel(immediate=immediate)
-            log_addon_lifecycle_action(
-                assignment,
-                "canceled",
-                user=request.user,
-                data={"immediate": immediate},
-            )
-            invalidate_entitlement_cache(organizer=self.request.organizer)
-            addon_canceled.send(
-                sender=OrganizerAddon, instance=assignment, immediate=immediate
-            )
+            if immediate or assignment.status == AddonStatus.CANCELED:
+                log_addon_lifecycle_action(
+                    assignment,
+                    "canceled",
+                    user=request.user,
+                    data={"immediate": True},
+                )
+                invalidate_entitlement_cache(organizer=self.request.organizer)
+                addon_canceled.send(
+                    sender=OrganizerAddon, instance=assignment, immediate=True
+                )
+            else:
+                log_addon_lifecycle_action(
+                    assignment,
+                    "cancellation_scheduled",
+                    user=request.user,
+                    data={
+                        "cancel_at": (
+                            assignment.cancel_at.isoformat()
+                            if assignment.cancel_at
+                            else None
+                        )
+                    },
+                )
 
         if immediate or assignment.status == AddonStatus.CANCELED:
             messages.success(
@@ -744,18 +758,32 @@ class EventAddonCancelView(EventPermissionRequiredMixin, TemplateView):
                 )
 
             assignment.cancel(immediate=immediate)
-            log_addon_lifecycle_action(
-                assignment,
-                "canceled",
-                user=request.user,
-                data={"immediate": immediate},
-            )
-            invalidate_entitlement_cache(
-                organizer=self.request.organizer, event=self.request.event
-            )
-            addon_canceled.send(
-                sender=EventAddon, instance=assignment, immediate=immediate
-            )
+            if immediate or assignment.status == AddonStatus.CANCELED:
+                log_addon_lifecycle_action(
+                    assignment,
+                    "canceled",
+                    user=request.user,
+                    data={"immediate": True},
+                )
+                invalidate_entitlement_cache(
+                    organizer=self.request.organizer, event=self.request.event
+                )
+                addon_canceled.send(
+                    sender=EventAddon, instance=assignment, immediate=True
+                )
+            else:
+                log_addon_lifecycle_action(
+                    assignment,
+                    "cancellation_scheduled",
+                    user=request.user,
+                    data={
+                        "cancel_at": (
+                            assignment.cancel_at.isoformat()
+                            if assignment.cancel_at
+                            else None
+                        )
+                    },
+                )
 
         if immediate or assignment.status == AddonStatus.CANCELED:
             messages.success(
@@ -926,6 +954,12 @@ class OrganizerAddonAdminRevokeView(AdministratorPermissionRequiredMixin, View):
                 ),
                 pk=self.kwargs["pk"],
             )
+            if assignment.status != AddonStatus.ACTIVE:
+                messages.info(request, _("This add-on assignment is already inactive."))
+                return redirect(
+                    "plugins:eventyay_business:addons.assignments.organizer.list"
+                )
+
             assignment.cancel(immediate=True)
             log_addon_lifecycle_action(
                 assignment, "revoked_by_admin", user=request.user
@@ -950,6 +984,12 @@ class EventAddonAdminRevokeView(AdministratorPermissionRequiredMixin, View):
                 ),
                 pk=self.kwargs["pk"],
             )
+            if assignment.status != AddonStatus.ACTIVE:
+                messages.info(request, _("This add-on assignment is already inactive."))
+                return redirect(
+                    "plugins:eventyay_business:addons.assignments.event.list"
+                )
+
             assignment.cancel(immediate=True)
             log_addon_lifecycle_action(
                 assignment, "revoked_by_admin", user=request.user

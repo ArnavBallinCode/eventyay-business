@@ -456,14 +456,17 @@ class OrganizerAddon(models.Model):
 
     def cancel(self, immediate: bool = False, cancel_at=None):
         current = now()
-        self.canceled_at = current
         if immediate or not (self.ends_at or cancel_at):
             self.status = AddonStatus.CANCELED
             self.cancel_at = current
+            self.canceled_at = current
         else:
             effective_cancel = cancel_at or self.ends_at
             if effective_cancel <= current:
                 self.status = AddonStatus.CANCELED
+                self.canceled_at = current
+            else:
+                self.canceled_at = None
             self.cancel_at = effective_cancel
         self.save(update_fields=["status", "cancel_at", "canceled_at", "updated_at"])
 
@@ -578,14 +581,17 @@ class EventAddon(models.Model):
 
     def cancel(self, immediate: bool = False, cancel_at=None):
         current = now()
-        self.canceled_at = current
         if immediate or not (self.ends_at or cancel_at):
             self.status = AddonStatus.CANCELED
             self.cancel_at = current
+            self.canceled_at = current
         else:
             effective_cancel = cancel_at or self.ends_at
             if effective_cancel <= current:
                 self.status = AddonStatus.CANCELED
+                self.canceled_at = current
+            else:
+                self.canceled_at = None
             self.cancel_at = effective_cancel
         self.save(update_fields=["status", "cancel_at", "canceled_at", "updated_at"])
 

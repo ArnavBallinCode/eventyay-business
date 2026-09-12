@@ -1,4 +1,5 @@
 import logging
+from django.db import transaction
 from django.dispatch import receiver
 from django.utils.timezone import now
 
@@ -6,7 +7,9 @@ logger = logging.getLogger(__name__)
 
 try:
     from django_scopes import scopes_disabled
-except ImportError:
+except ModuleNotFoundError as err:
+    if err.name != "django_scopes":
+        raise
     from contextlib import nullcontext as scopes_disabled
 
 try:
@@ -53,14 +56,25 @@ def expire_addon_assignments():
             ).select_related("organizer", "addon")
         )
         for item in org_canceled:
-            item.status = AddonStatus.CANCELED
-            if not item.canceled_at:
+            with transaction.atomic():
+                rows_updated = OrganizerAddon.objects.filter(
+                    pk=item.pk,
+                    status=AddonStatus.ACTIVE,
+                ).update(
+                    status=AddonStatus.CANCELED,
+                    canceled_at=current_time,
+                    updated_at=current_time,
+                )
+                if not rows_updated:
+                    continue
+                item.status = AddonStatus.CANCELED
                 item.canceled_at = current_time
-            item.save(update_fields=["status", "canceled_at", "updated_at"])
-            canceled_count += 1
-            log_addon_lifecycle_action(item, "canceled")
-            invalidate_entitlement_cache(organizer=item.organizer)
-            addon_canceled.send(sender=OrganizerAddon, instance=item, immediate=False)
+                canceled_count += 1
+                log_addon_lifecycle_action(item, "canceled")
+                invalidate_entitlement_cache(organizer=item.organizer)
+                addon_canceled.send(
+                    sender=OrganizerAddon, instance=item, immediate=False
+                )
 
         # 2. Process expiration for OrganizerAddon
         org_expired = list(
@@ -71,12 +85,21 @@ def expire_addon_assignments():
             ).select_related("organizer", "addon")
         )
         for item in org_expired:
-            item.status = AddonStatus.EXPIRED
-            item.save(update_fields=["status", "updated_at"])
-            expired_count += 1
-            log_addon_lifecycle_action(item, "expired")
-            invalidate_entitlement_cache(organizer=item.organizer)
-            addon_expired.send(sender=OrganizerAddon, instance=item)
+            with transaction.atomic():
+                rows_updated = OrganizerAddon.objects.filter(
+                    pk=item.pk,
+                    status=AddonStatus.ACTIVE,
+                ).update(
+                    status=AddonStatus.EXPIRED,
+                    updated_at=current_time,
+                )
+                if not rows_updated:
+                    continue
+                item.status = AddonStatus.EXPIRED
+                expired_count += 1
+                log_addon_lifecycle_action(item, "expired")
+                invalidate_entitlement_cache(organizer=item.organizer)
+                addon_expired.send(sender=OrganizerAddon, instance=item)
 
         # 3. Process scheduled cancellations for EventAddon
         event_canceled = list(
@@ -87,16 +110,25 @@ def expire_addon_assignments():
             ).select_related("event", "event__organizer", "addon")
         )
         for item in event_canceled:
-            item.status = AddonStatus.CANCELED
-            if not item.canceled_at:
+            with transaction.atomic():
+                rows_updated = EventAddon.objects.filter(
+                    pk=item.pk,
+                    status=AddonStatus.ACTIVE,
+                ).update(
+                    status=AddonStatus.CANCELED,
+                    canceled_at=current_time,
+                    updated_at=current_time,
+                )
+                if not rows_updated:
+                    continue
+                item.status = AddonStatus.CANCELED
                 item.canceled_at = current_time
-            item.save(update_fields=["status", "canceled_at", "updated_at"])
-            canceled_count += 1
-            log_addon_lifecycle_action(item, "canceled")
-            invalidate_entitlement_cache(
-                organizer=item.event.organizer, event=item.event
-            )
-            addon_canceled.send(sender=EventAddon, instance=item, immediate=False)
+                canceled_count += 1
+                log_addon_lifecycle_action(item, "canceled")
+                invalidate_entitlement_cache(
+                    organizer=item.event.organizer, event=item.event
+                )
+                addon_canceled.send(sender=EventAddon, instance=item, immediate=False)
 
         # 4. Process expiration for EventAddon
         event_expired = list(
@@ -107,14 +139,23 @@ def expire_addon_assignments():
             ).select_related("event", "event__organizer", "addon")
         )
         for item in event_expired:
-            item.status = AddonStatus.EXPIRED
-            item.save(update_fields=["status", "updated_at"])
-            expired_count += 1
-            log_addon_lifecycle_action(item, "expired")
-            invalidate_entitlement_cache(
-                organizer=item.event.organizer, event=item.event
-            )
-            addon_expired.send(sender=EventAddon, instance=item)
+            with transaction.atomic():
+                rows_updated = EventAddon.objects.filter(
+                    pk=item.pk,
+                    status=AddonStatus.ACTIVE,
+                ).update(
+                    status=AddonStatus.EXPIRED,
+                    updated_at=current_time,
+                )
+                if not rows_updated:
+                    continue
+                item.status = AddonStatus.EXPIRED
+                expired_count += 1
+                log_addon_lifecycle_action(item, "expired")
+                invalidate_entitlement_cache(
+                    organizer=item.event.organizer, event=item.event
+                )
+                addon_expired.send(sender=EventAddon, instance=item)
 
     logger.info(
         "expire_addon_assignments completed: %d canceled, %d expired",
