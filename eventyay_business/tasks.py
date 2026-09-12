@@ -230,8 +230,16 @@ def manage_subscription_lifecycles():
                 locked_sub.save()
 
                 downgraded_count += 1
-                invalidate_entitlement_cache(organizer=locked_sub.organizer)
-                subscription_downgraded.send(sender=Subscription, instance=locked_sub)
+                organizer = locked_sub.organizer
+                sub_instance = locked_sub
+                transaction.on_commit(
+                    lambda org=organizer, inst=sub_instance: (
+                        invalidate_entitlement_cache(organizer=org),
+                        subscription_downgraded.send(
+                            sender=Subscription, instance=inst
+                        ),
+                    )
+                )
 
         # 2. Expire past-due subscriptions whose grace period has ended
         past_due_subs = list(
@@ -255,8 +263,14 @@ def manage_subscription_lifecycles():
                 locked_sub.save()
 
                 expired_count += 1
-                invalidate_entitlement_cache(organizer=locked_sub.organizer)
-                subscription_expired.send(sender=Subscription, instance=locked_sub)
+                organizer = locked_sub.organizer
+                sub_instance = locked_sub
+                transaction.on_commit(
+                    lambda org=organizer, inst=sub_instance: (
+                        invalidate_entitlement_cache(organizer=org),
+                        subscription_expired.send(sender=Subscription, instance=inst),
+                    )
+                )
 
     logger.info(
         "manage_subscription_lifecycles completed: %d downgraded, %d expired",

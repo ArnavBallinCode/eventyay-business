@@ -4,6 +4,17 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
+def backfill_past_due_since(apps, schema_editor):
+    Subscription = apps.get_model("eventyay_business", "Subscription")
+    from django.utils.timezone import now
+
+    for sub in Subscription.objects.filter(
+        status="past_due", past_due_since__isnull=True
+    ):
+        sub.past_due_since = sub.ends_at or now()
+        sub.save(update_fields=["past_due_since"])
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -21,6 +32,7 @@ class Migration(migrations.Migration):
                 blank=True, null=True, verbose_name="Past due since"
             ),
         ),
+        migrations.RunPython(backfill_past_due_since, migrations.RunPython.noop),
         migrations.AddField(
             model_name="subscription",
             name="pending_billing_interval",

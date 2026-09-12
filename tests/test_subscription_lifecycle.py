@@ -360,9 +360,7 @@ def test_cancel_scheduled_downgrade(client, lifecycle_data):
             "eventyay_business.views.get_stripe_secret_key_safe",
             return_value="sk_test_123",
         ),
-        patch(
-            "eventyay_business.stripe_service.stripe.Subscription.modify"
-        ) as mock_modify,
+        patch("stripe.Subscription.modify") as mock_modify,
     ):
         response = client.post(url, follow=True)
         assert response.status_code == 200
@@ -419,6 +417,11 @@ def test_past_due_grace_period_and_expiration(lifecycle_data):
     # Beyond grace period without platform admin, should not allow 5 admins
     assert decision_expired.allowed is False
 
+    # When past_due_since is missing, grace period is False
+    sub.past_due_since = None
+    assert sub.is_in_grace_period() is False
+    assert sub.grace_period_ends_at() is None
+
 
 @pytest.mark.django_db
 def test_platform_administrator_bypass(lifecycle_data):
@@ -437,6 +440,13 @@ def test_platform_administrator_bypass(lifecycle_data):
     sub.status = SubscriptionStatus.EXPIRED
     sub.save()
 
+    # Non-staff user should be denied
+    non_staff_decision = check_entitlement(
+        organizer, "organizer.full_admins", quantity=100, user=user
+    )
+    assert non_staff_decision is not None
+    assert non_staff_decision.allowed is False
+
     staff_user = User.objects.create_user(
         email="admin@platform.com", password="pw", is_staff=True
     )
@@ -448,7 +458,9 @@ def test_platform_administrator_bypass(lifecycle_data):
 
 
 @pytest.mark.django_db
-def test_manage_subscription_lifecycles_task(lifecycle_data):
+def test_manage_subscription_lifecycles_task(
+    lifecycle_data, django_capture_on_commit_callbacks
+):
     (
         organizer,
         free_tier,
@@ -488,7 +500,8 @@ def test_manage_subscription_lifecycles_task(lifecycle_data):
     subscription_expired.connect(on_expired)
 
     try:
-        result = manage_subscription_lifecycles()
+        with django_capture_on_commit_callbacks(execute=True):
+            result = manage_subscription_lifecycles()
         assert result["downgraded"] == 1
         assert result["expired"] == 1
 
@@ -548,6 +561,7 @@ def test_plan_view_banners(client, lifecycle_data):
     sub.pending_tier_version = None
     sub.pending_change_at = None
     sub.status = SubscriptionStatus.PAST_DUE
+    sub.ends_at = now() - timedelta(days=2)
     sub.past_due_since = now() - timedelta(days=2)
     sub.save()
 

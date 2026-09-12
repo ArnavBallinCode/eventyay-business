@@ -282,6 +282,21 @@ class Subscription(models.Model):
             )
         ]
 
+    def save(self, *args, **kwargs):
+        if self.status == SubscriptionStatus.PAST_DUE and not self.past_due_since:
+            self.past_due_since = now()
+            if "update_fields" in kwargs and kwargs["update_fields"] is not None:
+                kwargs["update_fields"] = set(kwargs["update_fields"]) | {
+                    "past_due_since"
+                }
+        elif self.status == SubscriptionStatus.ACTIVE and self.past_due_since:
+            self.past_due_since = None
+            if "update_fields" in kwargs and kwargs["update_fields"] is not None:
+                kwargs["update_fields"] = set(kwargs["update_fields"]) | {
+                    "past_due_since"
+                }
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"Subscription for {self.organizer} ({self.status})"
 
@@ -302,7 +317,7 @@ class Subscription(models.Model):
         if self.status != SubscriptionStatus.PAST_DUE:
             return False
         if not self.past_due_since:
-            return True
+            return False
         if grace_days is None:
             grace_days = self.grace_period_days
         return now() <= self.past_due_since + timedelta(days=grace_days)

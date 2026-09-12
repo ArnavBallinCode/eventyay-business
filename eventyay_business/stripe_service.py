@@ -660,6 +660,27 @@ def process_subscription_checkout_completed(session_data: dict):
                 ):
                     # Idempotent
                     return sub
+
+                old_stripe_sub_id = sub.stripe_subscription_id
+                if (
+                    old_stripe_sub_id
+                    and stripe_sub_id
+                    and old_stripe_sub_id != stripe_sub_id
+                ):
+                    try:
+                        import stripe
+
+                        secret_key = get_stripe_secret_key_safe()
+                        if secret_key:
+                            stripe.api_key = secret_key
+                            stripe.Subscription.cancel(old_stripe_sub_id)
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to cancel old Stripe subscription %s: %s",
+                            old_stripe_sub_id,
+                            exc,
+                        )
+
                 sub.tier_version = tier_version
                 sub.status = SubscriptionStatus.ACTIVE
                 sub.billing_interval = interval_val
@@ -671,6 +692,7 @@ def process_subscription_checkout_completed(session_data: dict):
                 sub.pending_tier_version = None
                 sub.pending_billing_interval = None
                 sub.pending_change_at = None
+                sub.past_due_since = None
                 sub.save()
             else:
                 sub = Subscription.objects.create(
@@ -719,6 +741,7 @@ def process_subscription_change(event_type: str, sub_data: dict):
                 .first()
             )
             if sub:
+                is_downgrading = False
                 if (
                     event_type == "customer.subscription.deleted"
                     or stripe_status == "canceled"
@@ -737,16 +760,18 @@ def process_subscription_change(event_type: str, sub_data: dict):
                     if sub.pending_tier_version and (
                         not sub.pending_change_at or sub.pending_change_at <= now()
                     ):
-                        from .signals import subscription_downgraded
-
                         sub.tier_version = sub.pending_tier_version
                         if sub.pending_billing_interval:
                             sub.billing_interval = sub.pending_billing_interval
                         sub.pending_tier_version = None
                         sub.pending_billing_interval = None
                         sub.pending_change_at = None
-                        subscription_downgraded.send(sender=Subscription, instance=sub)
+                        is_downgrading = True
                 sub.save()
+                if is_downgrading:
+                    from .signals import subscription_downgraded
+
+                    subscription_downgraded.send(sender=Subscription, instance=sub)
                 invalidate_entitlement_cache(organizer=sub.organizer)
 
             # 2. Check OrganizerAddon
