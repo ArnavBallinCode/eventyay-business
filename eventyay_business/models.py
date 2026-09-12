@@ -1,3 +1,6 @@
+from typing import Optional
+
+from datetime import datetime, timedelta
 from django.conf import settings
 from django.db import models
 from django.utils.timezone import now
@@ -239,6 +242,31 @@ class Subscription(models.Model):
     configuration_snapshot = models.JSONField(
         default=dict, blank=True, verbose_name=_("Configuration snapshot")
     )
+    pending_tier_version = models.ForeignKey(
+        TierVersion,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pending_subscriptions",
+        verbose_name=_("Pending tier version"),
+    )
+    pending_billing_interval = models.CharField(
+        max_length=20,
+        choices=BillingInterval.choices,
+        null=True,
+        blank=True,
+        verbose_name=_("Pending billing interval"),
+    )
+    pending_change_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name=_("Pending change at"),
+    )
+    past_due_since = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name=_("Past due since"),
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Created at"))
     updated_at = models.DateTimeField(auto_now=True, verbose_name=_("Updated at"))
 
@@ -256,6 +284,25 @@ class Subscription(models.Model):
 
     def __str__(self):
         return f"Subscription for {self.organizer} ({self.status})"
+
+    @property
+    def has_scheduled_downgrade(self) -> bool:
+        return (
+            self.pending_tier_version is not None
+            and self.status == SubscriptionStatus.ACTIVE
+        )
+
+    def is_in_grace_period(self, grace_days: int = 7) -> bool:
+        if self.status != SubscriptionStatus.PAST_DUE:
+            return False
+        if not self.past_due_since:
+            return True
+        return now() <= self.past_due_since + timedelta(days=grace_days)
+
+    def grace_period_ends_at(self, grace_days: int = 7) -> Optional[datetime]:
+        if self.status != SubscriptionStatus.PAST_DUE or not self.past_due_since:
+            return None
+        return self.past_due_since + timedelta(days=grace_days)
 
 
 class UsageRecord(models.Model):

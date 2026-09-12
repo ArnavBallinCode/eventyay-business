@@ -668,6 +668,9 @@ def process_subscription_checkout_completed(session_data: dict):
                 sub.ends_at = ends_at
                 sub.stripe_customer_id = stripe_customer_id or sub.stripe_customer_id
                 sub.stripe_subscription_id = stripe_sub_id or sub.stripe_subscription_id
+                sub.pending_tier_version = None
+                sub.pending_billing_interval = None
+                sub.pending_change_at = None
                 sub.save()
             else:
                 sub = Subscription.objects.create(
@@ -724,10 +727,25 @@ def process_subscription_change(event_type: str, sub_data: dict):
                     sub.cancel_at = now()
                 elif stripe_status in ("past_due", "unpaid"):
                     sub.status = SubscriptionStatus.PAST_DUE
+                    if not sub.past_due_since:
+                        sub.past_due_since = now()
                 elif stripe_status == "active":
                     sub.status = SubscriptionStatus.ACTIVE
+                    sub.past_due_since = None
                     if period_end:
                         sub.ends_at = period_end
+                    if sub.pending_tier_version and (
+                        not sub.pending_change_at or sub.pending_change_at <= now()
+                    ):
+                        from .signals import subscription_downgraded
+
+                        sub.tier_version = sub.pending_tier_version
+                        if sub.pending_billing_interval:
+                            sub.billing_interval = sub.pending_billing_interval
+                        sub.pending_tier_version = None
+                        sub.pending_billing_interval = None
+                        sub.pending_change_at = None
+                        subscription_downgraded.send(sender=Subscription, instance=sub)
                 sub.save()
                 invalidate_entitlement_cache(organizer=sub.organizer)
 
@@ -794,7 +812,9 @@ def process_invoice_payment_failed(invoice_data: dict):
             )
             if sub:
                 sub.status = SubscriptionStatus.PAST_DUE
-                sub.save()
+                if not sub.past_due_since:
+                    sub.past_due_since = now()
+                sub.save(update_fields=["status", "past_due_since", "updated_at"])
                 invalidate_entitlement_cache(organizer=sub.organizer)
 
             # Also mark linked recurring add-ons past due
@@ -836,7 +856,8 @@ def process_invoice_paid(invoice_data: dict):
             )
             if sub and sub.status == SubscriptionStatus.PAST_DUE:
                 sub.status = SubscriptionStatus.ACTIVE
-                sub.save()
+                sub.past_due_since = None
+                sub.save(update_fields=["status", "past_due_since", "updated_at"])
                 invalidate_entitlement_cache(organizer=sub.organizer)
 
             # Also restore linked recurring add-ons back to ACTIVE
