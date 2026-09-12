@@ -4,6 +4,9 @@ from django.utils.translation import gettext_lazy as _
 
 from .capabilities import get_capability_choices
 from .models import (
+    AddonDefinition,
+    EventAddon,
+    OrganizerAddon,
     Subscription,
     SubscriptionStatus,
     Tier,
@@ -180,3 +183,123 @@ class SubscriptionAdminForm(forms.ModelForm):
                     _("This organizer already has an active or pending subscription.")
                 )
         return cleaned_data
+
+
+class AddonDefinitionForm(forms.ModelForm):
+    class Meta:
+        model = AddonDefinition
+        fields = [
+            "name",
+            "slug",
+            "description",
+            "assignment_scope",
+            "pricing_mode",
+            "currency",
+            "price",
+            "capability",
+            "entitlement_value",
+            "quantity",
+            "active",
+            "public",
+        ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        choices = [("", "---------")] + get_capability_choices()
+        if self.instance and self.instance.capability:
+            existing_caps = [c[0] for c in choices]
+            if self.instance.capability not in existing_caps:
+                choices.append((self.instance.capability, self.instance.capability))
+        self.fields["capability"].widget = forms.Select(choices=choices)
+
+    def clean(self):
+        cleaned_data = super().clean()
+        capability_name = cleaned_data.get("capability")
+        value = cleaned_data.get("entitlement_value")
+
+        if capability_name:
+            from .capabilities import CapabilityValueType, get_capability
+
+            cap = get_capability(capability_name)
+            is_existing_unchanged = (
+                self.instance
+                and self.instance.pk
+                and self.instance.capability == capability_name
+            )
+            if not cap and not is_existing_unchanged:
+                self.add_error(
+                    "capability",
+                    forms.ValidationError(
+                        _("Unknown capability: %(name)s"),
+                        params={"name": capability_name},
+                    ),
+                )
+            elif cap and value:
+                if cap.value_type == CapabilityValueType.INTEGER:
+                    try:
+                        int(value)
+                    except ValueError:
+                        self.add_error(
+                            "entitlement_value",
+                            forms.ValidationError(
+                                _("Value must be a valid whole number (integer).")
+                            ),
+                        )
+                elif cap.value_type in (
+                    CapabilityValueType.DECIMAL,
+                    CapabilityValueType.MONEY,
+                ):
+                    from decimal import Decimal, InvalidOperation
+
+                    try:
+                        val = Decimal(value)
+                        if not val.is_finite():
+                            raise InvalidOperation
+                    except (InvalidOperation, TypeError):
+                        self.add_error(
+                            "entitlement_value",
+                            forms.ValidationError(
+                                _("Value must be a valid number or decimal.")
+                            ),
+                        )
+                elif (
+                    cap.value_type == CapabilityValueType.BOOLEAN
+                    and value.lower() not in ("true", "false", "1", "0", "yes", "no")
+                ):
+                    self.add_error(
+                        "entitlement_value",
+                        forms.ValidationError(
+                            _(
+                                "Value must be 'true' or 'false' for boolean capabilities."
+                            )
+                        ),
+                    )
+        return cleaned_data
+
+
+class OrganizerAddonForm(forms.ModelForm):
+    class Meta:
+        model = OrganizerAddon
+        fields = ["organizer", "addon", "quantity", "starts_at", "ends_at", "status"]
+        field_classes = {
+            "starts_at": SplitDateTimeField,
+            "ends_at": SplitDateTimeField,
+        }
+        widgets = {
+            "starts_at": SplitDateTimePickerWidget(),
+            "ends_at": SplitDateTimePickerWidget(),
+        }
+
+
+class EventAddonForm(forms.ModelForm):
+    class Meta:
+        model = EventAddon
+        fields = ["event", "addon", "quantity", "starts_at", "ends_at", "status"]
+        field_classes = {
+            "starts_at": SplitDateTimeField,
+            "ends_at": SplitDateTimeField,
+        }
+        widgets = {
+            "starts_at": SplitDateTimePickerWidget(),
+            "ends_at": SplitDateTimePickerWidget(),
+        }

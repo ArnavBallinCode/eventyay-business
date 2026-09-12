@@ -82,6 +82,15 @@ if nav_global:
                 ),
                 "parent": reverse("eventyay_admin:admin.global.business"),
             },
+            {
+                "label": _("Add-ons"),
+                "url": reverse("plugins:eventyay_business:addons.list"),
+                "active": (
+                    url.namespace == "plugins:eventyay_business"
+                    and url.url_name.startswith("addons.")
+                ),
+                "parent": reverse("eventyay_admin:admin.global.business"),
+            },
         ]
 
 
@@ -187,8 +196,41 @@ if entitlement_check and EntitlementDecision:
         if value is None:
             value = cap_def.default_value
 
+        from .models import AddonStatus, EventAddon, OrganizerAddon
+
+        active_org_addons = list(
+            OrganizerAddon.objects.filter(
+                organizer=organizer,
+                addon__capability=capability,
+                addon__active=True,
+                status=AddonStatus.ACTIVE,
+                starts_at__lte=current_time,
+            )
+            .exclude(ends_at__lt=current_time)
+            .select_related("addon")
+        )
+
+        active_event_addons = []
+        if event:
+            active_event_addons = list(
+                EventAddon.objects.filter(
+                    event=event,
+                    addon__capability=capability,
+                    addon__active=True,
+                    status=AddonStatus.ACTIVE,
+                    starts_at__lte=current_time,
+                )
+                .exclude(ends_at__lt=current_time)
+                .select_related("addon")
+            )
+
+        all_active_addons = active_org_addons + active_event_addons
+
         if cap_def.value_type == CapabilityValueType.BOOLEAN:
-            if value:
+            addon_grants = any(
+                bool(a.addon.get_typed_value()) for a in all_active_addons
+            )
+            if value or addon_grants:
                 return EntitlementDecision(allowed=True)
             else:
                 return EntitlementDecision(
@@ -198,6 +240,22 @@ if entitlement_check and EntitlementDecision:
                 )
 
         if cap_def.value_type == CapabilityValueType.INTEGER:
+            addon_allowance = sum(
+                a.quantity
+                * int(
+                    a.addon.get_typed_value()
+                    if a.addon.get_typed_value() is not None
+                    else (a.addon.quantity or 1)
+                )
+                for a in all_active_addons
+            )
+            if value is not None:
+                effective_limit = value + addon_allowance
+            elif addon_allowance > 0:
+                effective_limit = addon_allowance
+            else:
+                effective_limit = None
+
             total_quantity = quantity
             if capability.endswith(".monthly"):
                 from .models import UsageRecord
@@ -212,15 +270,15 @@ if entitlement_check and EntitlementDecision:
                 past_usage = usage_agg["total"] or 0
                 total_quantity = quantity + int(past_usage)
 
-            if value is not None and total_quantity > value:
+            if effective_limit is not None and total_quantity > effective_limit:
                 return EntitlementDecision(
                     allowed=False,
                     reason_code="tier_limit_exceeded",
-                    limit=value,
+                    limit=effective_limit,
                     used=past_usage if capability.endswith(".monthly") else None,
                     message="You have reached the maximum limit for this feature on your current plan.",
                 )
-            return EntitlementDecision(allowed=True, limit=value)
+            return EntitlementDecision(allowed=True, limit=effective_limit)
 
         return EntitlementDecision(allowed=True)
 
