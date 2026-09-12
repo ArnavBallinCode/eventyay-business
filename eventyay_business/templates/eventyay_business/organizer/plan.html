@@ -174,7 +174,7 @@
                                     {% endif %}
                                 </td>
                                 <td class="text-right">
-                                    {% if addon.assignment_scope == "organizer" and addon.is_active_for_organizer and addon.entitlement_value == "true" %}
+                                    {% if addon.assignment_scope == "organizer" and addon.is_active_for_organizer and addon.active_assignment.entitlement_value == "true" %}
                                         <button class="btn btn-default btn-sm" disabled>
                                             <i class="fa fa-check text-success"></i> {% trans "Active" %}
                                         </button>

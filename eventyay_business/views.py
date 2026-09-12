@@ -13,6 +13,7 @@ from django.views.generic import (
     UpdateView,
     View,
 )
+from eventyay.base.models import Event, Organizer
 from eventyay.control.permissions import (
     AdministratorPermissionRequiredMixin,
     OrganizerPermissionRequiredMixin,
@@ -21,7 +22,7 @@ from eventyay.control.views.organizer_views.organizer_detail_view_mixin import (
     OrganizerDetailViewMixin,
 )
 
-from .capabilities import get_all_capabilities
+from .capabilities import CapabilityValueType, get_all_capabilities, get_capability
 from .forms import (
     AddonDefinitionForm,
     EventAddonForm,
@@ -33,6 +34,7 @@ from .forms import (
     TierPriceFormSet,
 )
 from .models import (
+    AddonAssignmentScope,
     AddonDefinition,
     AddonStatus,
     EventAddon,
@@ -407,19 +409,26 @@ class OrganizerPlanView(
             ).order_by("assignment_scope", "name")
         )
 
-        active_org_addon_ids = set(
+        active_org_addons = list(
             OrganizerAddon.objects.filter(
                 organizer=organizer,
-                addon__active=True,
                 status=AddonStatus.ACTIVE,
                 starts_at__lte=current_time,
-            )
-            .exclude(ends_at__lt=current_time)
-            .values_list("addon_id", flat=True)
+            ).exclude(ends_at__lt=current_time)
         )
+        active_by_addon_id = {
+            oa.addon_id: oa for oa in active_org_addons if oa.addon_id
+        }
+        active_by_capability = {
+            oa.capability: oa for oa in active_org_addons if oa.capability
+        }
 
         for addon in available_addons:
-            addon.is_active_for_organizer = addon.id in active_org_addon_ids
+            active_assignment = active_by_addon_id.get(
+                addon.id
+            ) or active_by_capability.get(addon.capability)
+            addon.active_assignment = active_assignment
+            addon.is_active_for_organizer = active_assignment is not None
 
         ctx["available_addons"] = available_addons
         return ctx
@@ -453,13 +462,50 @@ class OrganizerAddonPurchaseView(
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["addon"] = self.addon
-        from .capabilities import get_capability
-
         ctx["capability"] = get_capability(self.addon.capability)
         return ctx
 
     def form_valid(self, form):
-        form.save()
+        cap = get_capability(self.addon.capability)
+
+        with transaction.atomic():
+            if self.addon.assignment_scope == AddonAssignmentScope.EVENT:
+                event = form.cleaned_data["event"]
+                Event.objects.select_for_update().get(pk=event.pk)
+                if cap and cap.value_type == CapabilityValueType.BOOLEAN:
+                    if EventAddon.objects.filter(
+                        event=event,
+                        capability=self.addon.capability,
+                        status=AddonStatus.ACTIVE,
+                    ).exists():
+                        messages.warning(
+                            self.request,
+                            _("This add-on is already active for %(event)s.")
+                            % {"event": event.name},
+                        )
+                        return redirect(
+                            "plugins:eventyay_business:organizer.plan",
+                            organizer=self.request.organizer.slug,
+                        )
+            else:
+                Organizer.objects.select_for_update().get(pk=self.request.organizer.pk)
+                if cap and cap.value_type == CapabilityValueType.BOOLEAN:
+                    if OrganizerAddon.objects.filter(
+                        organizer=self.request.organizer,
+                        capability=self.addon.capability,
+                        status=AddonStatus.ACTIVE,
+                    ).exists():
+                        messages.warning(
+                            self.request,
+                            _("This add-on is already active for your organisation."),
+                        )
+                        return redirect(
+                            "plugins:eventyay_business:organizer.plan",
+                            organizer=self.request.organizer.slug,
+                        )
+
+            form.save()
+
         messages.success(
             self.request,
             _("Add-on '%(name)s' has been successfully added to your plan.")

@@ -38,6 +38,7 @@ def organizer_setup():
         name="Acme Summit",
         slug="acme-summit",
         date_from=now(),
+        live=True,
     )
     return organizer, event
 
@@ -163,6 +164,20 @@ def test_purchase_event_scoped_addon(business_admin_client, organizer_setup):
         or "Please select an event" in resp_missing.content.decode()
     )
 
+    # Inactive (live=False) event fails ModelChoiceField validation
+    inactive_event = Event.objects.create(
+        organizer=organizer,
+        name="Draft Summit",
+        slug="draft-summit",
+        date_from=now(),
+        live=False,
+    )
+    resp_inactive = business_admin_client.post(
+        purchase_url, {"quantity": 1, "event": inactive_event.pk}
+    )
+    assert resp_inactive.status_code == 200
+    assert "Select a valid choice" in resp_inactive.content.decode()
+
     # Valid event succeeds
     resp_post = business_admin_client.post(
         purchase_url, {"quantity": 1, "event": event.pk}, follow=True
@@ -194,7 +209,11 @@ def test_purchase_boolean_duplicate_rejected(business_admin_client, organizer_se
 
     # Pre-existing active assignment
     OrganizerAddon.objects.create(
-        organizer=organizer, addon=addon, status=AddonStatus.ACTIVE
+        organizer=organizer,
+        addon=addon,
+        capability=addon.capability,
+        entitlement_value="true",
+        status=AddonStatus.ACTIVE,
     )
 
     purchase_url = reverse(
@@ -204,6 +223,47 @@ def test_purchase_boolean_duplicate_rejected(business_admin_client, organizer_se
     resp = business_admin_client.post(purchase_url, {"quantity": 1})
     assert resp.status_code == 200
     assert "already active" in resp.content.decode()
+
+
+@pytest.mark.django_db
+def test_form_duplicate_boolean_capability_different_definitions(organizer_setup):
+    from eventyay_business.forms import OrganizerAddonPurchaseForm
+
+    organizer, _ = organizer_setup
+    addon_def1 = AddonDefinition.objects.create(
+        name="Lounge Pack A",
+        slug="lounge-pack-a",
+        capability="video.loungemesh",
+        entitlement_value="true",
+        assignment_scope=AddonAssignmentScope.ORGANIZER,
+        active=True,
+        public=True,
+    )
+    addon_def2 = AddonDefinition.objects.create(
+        name="Lounge Pack B",
+        slug="lounge-pack-b",
+        capability="video.loungemesh",
+        entitlement_value="true",
+        assignment_scope=AddonAssignmentScope.ORGANIZER,
+        active=True,
+        public=True,
+    )
+
+    # First assignment created from def1
+    OrganizerAddon.objects.create(
+        organizer=organizer,
+        addon=addon_def1,
+        capability=addon_def1.capability,
+        entitlement_value="true",
+        status=AddonStatus.ACTIVE,
+    )
+
+    # Attempting to purchase def2 granting the same boolean capability
+    form = OrganizerAddonPurchaseForm(
+        data={"quantity": 1}, organizer=organizer, addon=addon_def2
+    )
+    assert not form.is_valid()
+    assert "already active" in form.errors["__all__"][0]
 
 
 @pytest.mark.django_db
@@ -220,18 +280,29 @@ def test_purchase_private_or_inactive_addon_returns_404(
         active=True,
         public=False,
     )
-
-    purchase_url = reverse(
-        "plugins:eventyay_business:organizer.addon.purchase",
-        kwargs={"organizer": organizer.slug, "pk": private_addon.pk},
+    inactive_addon = AddonDefinition.objects.create(
+        name="Inactive Addon",
+        slug="inactive-addon",
+        capability="video.loungemesh",
+        entitlement_value="true",
+        active=False,
+        public=True,
     )
-    resp = business_admin_client.get(purchase_url)
-    assert resp.status_code == 404
+
+    for addon in [private_addon, inactive_addon]:
+        purchase_url = reverse(
+            "plugins:eventyay_business:organizer.addon.purchase",
+            kwargs={"organizer": organizer.slug, "pk": addon.pk},
+        )
+        resp = business_admin_client.get(purchase_url)
+        assert resp.status_code == 404
 
 
 @pytest.mark.django_db
 @override_settings(SITE_URL="https://testserver")
 def test_purchase_requires_organizer_permission(client, organizer_setup):
+    from eventyay.base.models import User
+
     organizer, _ = organizer_setup
     addon = AddonDefinition.objects.create(
         name="Public Addon",
@@ -246,5 +317,23 @@ def test_purchase_requires_organizer_permission(client, organizer_setup):
         "plugins:eventyay_business:organizer.addon.purchase",
         kwargs={"organizer": organizer.slug, "pk": addon.pk},
     )
-    resp = client.get(purchase_url)
-    assert resp.status_code in (302, 403)
+
+    # Anonymous user is redirected to login
+    resp_anon = client.get(purchase_url)
+    assert resp_anon.status_code == 302
+    assert "/login/" in resp_anon.url
+
+    # Authenticated user without organizer settings permission is denied with 403
+    from eventyay.base.models import Team
+
+    unprivileged_user = User.objects.create_user("unprivileged@example.com", "dummy")
+    team = Team.objects.create(
+        organizer=organizer,
+        name="Event Creators",
+        can_create_events=True,
+        can_change_organizer_settings=False,
+    )
+    team.members.add(unprivileged_user)
+    client.force_login(unprivileged_user)
+    resp_denied = client.get(purchase_url)
+    assert resp_denied.status_code == 403

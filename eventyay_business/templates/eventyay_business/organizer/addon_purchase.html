@@ -1,5 +1,6 @@
 {% extends "pretixcontrol/organizers/base.html" %}
 {% load i18n %}
+{% load static %}
 {% load bootstrap3 %}
 
 {% block title %}{% trans "Purchase Add-on" %} - {{ addon.name }}{% endblock %}
@@ -39,7 +40,19 @@
                         {% endif %}<br>
                         <strong>{% trans "Price:" %}</strong>
                         {% if addon.price %}
-                            <strong>{{ addon.price }} {{ addon.currency }}</strong> ({{ addon.get_pricing_mode_display }})
+                            <span id="addon-pricing-display"
+                                  data-unit-price="{{ addon.price }}"
+                                  data-currency="{{ addon.currency }}"
+                                  data-pricing-mode="{{ addon.get_pricing_mode_display }}">
+                                <strong>{{ addon.price }} {{ addon.currency }}</strong> {% trans "per unit" %}
+                                <span class="text-muted">({{ addon.get_pricing_mode_display }})</span>
+                                <br>
+                                <span style="display: inline-block; margin-top: 5px;">
+                                    <strong>{% trans "Selected Quantity:" %}</strong> <span id="addon-selected-quantity">1</span><br>
+                                    <strong>{% trans "Total Cost:" %}</strong> <strong id="addon-calculated-total">{{ addon.price }} {{ addon.currency }}</strong>
+                                    <span class="text-muted">({% if addon.pricing_mode == "recurring" %}{% trans "Recurring fee" %}{% else %}{% trans "One-time payment" %}{% endif %})</span>
+                                </span>
+                            </span>
                         {% else %}
                             <span class="label label-success">{% trans "Free" %}</span>
                         {% endif %}
@@ -62,4 +75,5 @@
             </a>
         </div>
     </form>
+    <script type="module" src="{% static 'eventyay_business/addon_purchase.js' %}"></script>
 {% endblock %}

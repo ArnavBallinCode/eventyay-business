@@ -381,9 +381,9 @@ class OrganizerAddonPurchaseForm(forms.Form):
             if self.addon.assignment_scope == AddonAssignmentScope.EVENT:
                 self.fields["event"].required = True
                 if self.organizer:
-                    self.fields["event"].queryset = (
-                        self.organizer.events.all().order_by("name")
-                    )
+                    self.fields["event"].queryset = self.organizer.events.filter(
+                        live=True
+                    ).order_by("name")
                 else:
                     from eventyay.base.models import Event
 
@@ -421,21 +421,25 @@ class OrganizerAddonPurchaseForm(forms.Form):
             # Prevent duplicate active boolean add-on for the same event
             if cap and cap.value_type == CapabilityValueType.BOOLEAN:
                 if EventAddon.objects.filter(
-                    event=event, addon=self.addon, status=AddonStatus.ACTIVE
+                    event=event,
+                    capability=self.addon.capability,
+                    status=AddonStatus.ACTIVE,
                 ).exists():
                     raise forms.ValidationError(
-                        _("This add-on is already active for %(event)s.")
+                        _("This add-on capability is already active for %(event)s.")
                         % {"event": event.name}
                     )
         else:
             if cap and cap.value_type == CapabilityValueType.BOOLEAN:
                 if OrganizerAddon.objects.filter(
                     organizer=self.organizer,
-                    addon=self.addon,
+                    capability=self.addon.capability,
                     status=AddonStatus.ACTIVE,
                 ).exists():
                     raise forms.ValidationError(
-                        _("This add-on is already active for your organisation.")
+                        _(
+                            "This add-on capability is already active for your organisation."
+                        )
                     )
 
         return cleaned_data
