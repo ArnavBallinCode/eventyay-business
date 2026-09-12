@@ -152,6 +152,7 @@ def test_organizer_plan_view_shows_active_addons(business_admin_client):
         capability="video.loungemesh",
         entitlement_value="true",
         assignment_scope=AddonAssignmentScope.ORGANIZER,
+        active=False,
     )
     OrganizerAddon.objects.create(
         organizer=org,

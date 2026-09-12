@@ -1,0 +1,79 @@
+{% extends "pretixcontrol/organizers/base.html" %}
+{% load i18n %}
+{% load static %}
+{% load bootstrap3 %}
+
+{% block title %}{% trans "Purchase Add-on" %} - {{ addon.name }}{% endblock %}
+
+{% block inner %}
+    <h1>{% trans "Add to Plan" %}: {{ addon.name }}</h1>
+
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <h3 class="panel-title">
+                <i class="fa fa-fw fa-puzzle-piece"></i>
+                {% trans "Add-on Details" %}
+            </h3>
+        </div>
+        <div class="panel-body">
+            {% if addon.description %}
+                <p>{{ addon.description }}</p>
+            {% endif %}
+            <div class="row">
+                <div class="col-sm-6">
+                    <p>
+                        <strong>{% trans "Capability / Feature:" %}</strong> <code>{{ addon.capability }}</code><br>
+                        {% if capability %}
+                            <strong>{% trans "Feature Name:" %}</strong> {{ capability.label }}<br>
+                        {% endif %}
+                        <strong>{% trans "Allowance per unit:" %}</strong> {{ addon.entitlement_value }}
+                        {% if capability.unit %} {{ capability.unit }}{% endif %}
+                    </p>
+                </div>
+                <div class="col-sm-6">
+                    <p>
+                        <strong>{% trans "Scope:" %}</strong>
+                        {% if addon.assignment_scope == "organizer" %}
+                            <span class="label label-primary">{% trans "Organisation" %}</span>
+                        {% else %}
+                            <span class="label label-info">{% trans "Event" %}</span>
+                        {% endif %}<br>
+                        <strong>{% trans "Price:" %}</strong>
+                        {% if addon.price %}
+                            <span id="addon-pricing-display"
+                                  data-unit-price="{{ addon.price }}"
+                                  data-currency="{{ addon.currency }}"
+                                  data-pricing-mode="{{ addon.get_pricing_mode_display }}">
+                                <strong>{{ addon.price }} {{ addon.currency }}</strong> {% trans "per unit" %}
+                                <span class="text-muted">({{ addon.get_pricing_mode_display }})</span>
+                                <br>
+                                <span style="display: inline-block; margin-top: 5px;">
+                                    <strong>{% trans "Selected Quantity:" %}</strong> <span id="addon-selected-quantity">1</span><br>
+                                    <strong>{% trans "Total Cost:" %}</strong> <strong id="addon-calculated-total">{{ addon.price }} {{ addon.currency }}</strong>
+                                    <span class="text-muted">({% if addon.pricing_mode == "recurring" %}{% trans "Recurring fee" %}{% else %}{% trans "One-time payment" %}{% endif %})</span>
+                                </span>
+                            </span>
+                        {% else %}
+                            <span class="label label-success">{% trans "Free" %}</span>
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <form method="post" class="form-horizontal">
+        {% csrf_token %}
+        {% bootstrap_form form layout='horizontal' %}
+
+        <div class="form-group submit-group">
+            <button type="submit" class="btn btn-primary btn-save">
+                <i class="fa fa-check"></i> {% trans "Confirm & Add to Plan" %}
+            </button>
+            <a href="{% url 'plugins:eventyay_business:organizer.plan' organizer=request.organizer.slug %}" class="btn btn-default">
+                {% trans "Cancel" %}
+            </a>
+        </div>
+    </form>
+    <script type="module" src="{% static 'eventyay_business/addon_purchase.js' %}"></script>
+{% endblock %}

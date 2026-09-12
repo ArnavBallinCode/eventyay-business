@@ -114,4 +114,9 @@ urlpatterns = [
         views.OrganizerPlanView.as_view(),
         name="organizer.plan",
     ),
+    path(
+        "control/organizer/<str:organizer>/business/addons/<int:pk>/purchase/",
+        views.OrganizerAddonPurchaseView.as_view(),
+        name="organizer.addon.purchase",
+    ),
 ]
