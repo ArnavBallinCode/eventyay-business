@@ -26,6 +26,93 @@
                 </div>
             {% endif %}
         </div>
+    </div>
+
+    {# ── Active Add-ons Section ── #}
+    {% if active_organizer_addons or active_event_addons %}
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h3 class="panel-title">
+                    <i class="fa fa-fw fa-puzzle-piece"></i>
+                    {% trans "Active Add-ons" %}
+                </h3>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-striped" style="margin: 0;">
+                    <thead>
+                        <tr>
+                            <th>{% trans "Add-on" %}</th>
+                            <th>{% trans "Scope" %}</th>
+                            <th>{% trans "Included Quantity" %}</th>
+                            <th>{% trans "Capability & Value" %}</th>
+                            <th>{% trans "Expires / Renews" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for oa in active_organizer_addons %}
+                            <tr>
+                                <td>
+                                    <strong>{{ oa.addon.name }}</strong>
+                                    {% if oa.addon.description %}
+                                        <div class="help-block text-muted" style="margin: 2px 0 0; font-size: 12px;">
+                                            {{ oa.addon.description }}
+                                        </div>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <span class="label label-primary">{% trans "Organisation" %}</span>
+                                </td>
+                                <td>
+                                    <strong>{{ oa.quantity }}</strong>
+                                </td>
+                                <td>
+                                    <code>{{ oa.addon.capability }}</code>
+                                    <br>
+                                    <small class="text-muted">{% trans "Allowance:" %} {{ oa.addon.entitlement_value }}</small>
+                                </td>
+                                <td>
+                                    {% if oa.ends_at %}
+                                        {{ oa.ends_at|date:"SHORT_DATETIME_FORMAT" }}
+                                    {% else %}
+                                        <span class="text-muted">{% trans "Never / Continuous" %}</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                        {% for ea in active_event_addons %}
+                            <tr>
+                                <td>
+                                    <strong>{{ ea.addon.name }}</strong>
+                                    <div class="help-block text-muted" style="margin: 2px 0 0; font-size: 12px;">
+                                        {% trans "Event:" %} <strong>{{ ea.event.name }}</strong>
+                                    </div>
+                                </td>
+                                <td>
+                                    <span class="label label-info">{% trans "Event" %}</span>
+                                </td>
+                                <td>
+                                    <strong>{{ ea.quantity }}</strong>
+                                </td>
+                                <td>
+                                    <code>{{ ea.addon.capability }}</code>
+                                    <br>
+                                    <small class="text-muted">{% trans "Allowance:" %} {{ ea.addon.entitlement_value }}</small>
+                                </td>
+                                <td>
+                                    {% if ea.ends_at %}
+                                        {{ ea.ends_at|date:"SHORT_DATETIME_FORMAT" }}
+                                    {% else %}
+                                        <span class="text-muted">{% trans "Never / Continuous" %}</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% endif %}
+
     <style>
         /* Explicitly disable any browser or framework animations on the expandable sections */
         details, details *, details summary, details > div {
