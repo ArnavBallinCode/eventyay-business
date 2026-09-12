@@ -6,7 +6,10 @@
 {% endblock %}
 
 {% block content %}
-    <h1>{% trans "Add-on Definitions" %}</h1>
+    <h1>{% trans "Add-ons" %}</h1>
+
+    {% include "eventyay_business/addons/nav_tabs.html" with active_tab="definitions" %}
+
     <p>
         <a href="{% url 'plugins:eventyay_business:addons.create' %}" class="btn btn-default">
             <i class="fa fa-plus"></i> {% trans "Create Add-on" %}

@@ -1,0 +1,84 @@
+{% extends "pretixcontrol/admin/base.html" %}
+{% load i18n %}
+
+{% block title %}
+    {% trans "Event Add-on Assignments" %}
+{% endblock %}
+
+{% block content %}
+    <h1>{% trans "Add-ons" %}</h1>
+
+    {% include "eventyay_business/addons/nav_tabs.html" with active_tab="events" %}
+
+    <p>
+        <a href="{% url 'plugins:eventyay_business:addons.assignments.event.create' %}" class="btn btn-primary">
+            <i class="fa fa-plus"></i> {% trans "Assign Add-on to Event" %}
+        </a>
+    </p>
+
+    {% if assignments|length == 0 %}
+        <div class="empty-collection">
+            <p>
+                {% blocktrans trimmed %}
+                    No event add-on assignments found.
+                {% endblocktrans %}
+            </p>
+        </div>
+    {% else %}
+        <div class="table-responsive">
+            <table class="table table-hover table-striped">
+                <thead>
+                    <tr>
+                        <th>{% trans "Event" %}</th>
+                        <th>{% trans "Organizer" %}</th>
+                        <th>{% trans "Add-on" %}</th>
+                        <th>{% trans "Quantity" %}</th>
+                        <th>{% trans "Status" %}</th>
+                        <th>{% trans "Starts at" %}</th>
+                        <th>{% trans "Ends at" %}</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in assignments %}
+                        <tr>
+                            <td>
+                                <strong>{{ item.event.name }}</strong>
+                                <br>
+                                <small class="text-muted">{{ item.event.slug }}</small>
+                            </td>
+                            <td>
+                                {{ item.event.organizer.name }}
+                            </td>
+                            <td>
+                                <strong>{{ item.addon.name }}</strong>
+                                <br>
+                                <code>{{ item.addon.capability }}</code>
+                                <small class="text-muted">({{ item.addon.entitlement_value }})</small>
+                            </td>
+                            <td>{{ item.quantity }}</td>
+                            <td>
+                                {% if item.status == "active" and item.is_active %}
+                                    <span class="label label-success">{% trans "Active" %}</span>
+                                {% elif item.status == "active" %}
+                                    <span class="label label-warning">{% trans "Scheduled / Inactive" %}</span>
+                                {% elif item.status == "expired" %}
+                                    <span class="label label-default">{% trans "Expired" %}</span>
+                                {% else %}
+                                    <span class="label label-danger">{% trans "Canceled" %}</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ item.starts_at|date:"SHORT_DATETIME_FORMAT" }}</td>
+                            <td>{{ item.ends_at|date:"SHORT_DATETIME_FORMAT"|default:"-" }}</td>
+                            <td class="text-right">
+                                <a href="{% url 'plugins:eventyay_business:addons.assignments.event.edit' pk=item.pk %}" class="btn btn-default btn-sm">
+                                    <i class="fa fa-edit"></i>
+                                </a>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+{% endblock %}

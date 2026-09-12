@@ -7,6 +7,9 @@ from eventyay_business.models import (
     AddonAssignmentScope,
     AddonDefinition,
     AddonPricingMode,
+    AddonStatus,
+    EventAddon,
+    OrganizerAddon,
 )
 
 
@@ -179,3 +182,131 @@ def test_addon_legacy_unchanged_capability_allowed(business_admin_client):
     addon.refresh_from_db()
     assert addon.name == "Legacy Addon Renamed"
     assert addon.price == Decimal("20.00")
+
+
+@pytest.mark.django_db
+def test_organizer_addon_assignment_views(business_admin_client):
+    from eventyay.base.models import Organizer
+
+    org = Organizer.objects.create(name="Assign Org", slug="assign-org")
+    addon = AddonDefinition.objects.create(
+        name="Org Pack",
+        slug="org-pack",
+        capability="organizer.full_admins",
+        entitlement_value="2",
+        assignment_scope=AddonAssignmentScope.ORGANIZER,
+    )
+
+    # List view
+    list_url = reverse("plugins:eventyay_business:addons.assignments.organizer.list")
+    resp = business_admin_client.get(list_url)
+    assert resp.status_code == 200
+
+    # Create assignment
+    create_url = reverse(
+        "plugins:eventyay_business:addons.assignments.organizer.create"
+    )
+    resp = business_admin_client.post(
+        create_url,
+        {
+            "organizer": org.pk,
+            "addon": addon.pk,
+            "quantity": 3,
+            "status": "active",
+            "starts_at_0": "2026-09-01",
+            "starts_at_1": "10:00:00",
+            "ends_at_0": "",
+            "ends_at_1": "",
+        },
+    )
+    assert resp.status_code == 302
+    assignment = OrganizerAddon.objects.get(organizer=org, addon=addon)
+    assert assignment.quantity == 3
+    assert assignment.status == AddonStatus.ACTIVE
+
+    # Edit assignment
+    edit_url = reverse(
+        "plugins:eventyay_business:addons.assignments.organizer.edit",
+        kwargs={"pk": assignment.pk},
+    )
+    resp = business_admin_client.post(
+        edit_url,
+        {
+            "organizer": org.pk,
+            "addon": addon.pk,
+            "quantity": 5,
+            "status": "canceled",
+            "starts_at_0": "2026-09-01",
+            "starts_at_1": "10:00:00",
+            "ends_at_0": "2026-09-30",
+            "ends_at_1": "23:59:59",
+        },
+    )
+    assert resp.status_code == 302
+    assignment.refresh_from_db()
+    assert assignment.quantity == 5
+    assert assignment.status == AddonStatus.CANCELED
+
+
+@pytest.mark.django_db
+def test_event_addon_assignment_views(business_admin_client):
+    from django.utils.timezone import now
+    from eventyay.base.models import Event, Organizer
+
+    org = Organizer.objects.create(name="Event Org", slug="event-org")
+    event = Event.objects.create(
+        organizer=org, name="Assign Event", slug="assign-event", date_from=now()
+    )
+    addon = AddonDefinition.objects.create(
+        name="Event Pack",
+        slug="event-pack",
+        capability="video.jitsi.concurrent_rooms",
+        entitlement_value="5",
+        assignment_scope=AddonAssignmentScope.EVENT,
+    )
+
+    # List view
+    list_url = reverse("plugins:eventyay_business:addons.assignments.event.list")
+    resp = business_admin_client.get(list_url)
+    assert resp.status_code == 200
+
+    # Create assignment
+    create_url = reverse("plugins:eventyay_business:addons.assignments.event.create")
+    resp = business_admin_client.post(
+        create_url,
+        {
+            "event": event.pk,
+            "addon": addon.pk,
+            "quantity": 2,
+            "status": "active",
+            "starts_at_0": "2026-09-01",
+            "starts_at_1": "12:00:00",
+            "ends_at_0": "",
+            "ends_at_1": "",
+        },
+    )
+    assert resp.status_code == 302
+    assignment = EventAddon.objects.get(event=event, addon=addon)
+    assert assignment.quantity == 2
+
+    # Edit assignment
+    edit_url = reverse(
+        "plugins:eventyay_business:addons.assignments.event.edit",
+        kwargs={"pk": assignment.pk},
+    )
+    resp = business_admin_client.post(
+        edit_url,
+        {
+            "event": event.pk,
+            "addon": addon.pk,
+            "quantity": 4,
+            "status": "active",
+            "starts_at_0": "2026-09-01",
+            "starts_at_1": "12:00:00",
+            "ends_at_0": "",
+            "ends_at_1": "",
+        },
+    )
+    assert resp.status_code == 302
+    assignment.refresh_from_db()
+    assert assignment.quantity == 4
