@@ -108,10 +108,35 @@ class TierEntitlementForm(forms.ModelForm):
                     )
         return cleaned_data
 
+    def clean_currency(self):
+        currency = self.cleaned_data.get("currency")
+        if currency:
+            currency = currency.strip().upper()
+            if not currency.isalpha() or len(currency) != 3:
+                raise forms.ValidationError(
+                    _("Please enter a valid 3-letter currency code (e.g. USD, EUR).")
+                )
+        return currency
+
+
+class TierPriceForm(forms.ModelForm):
+    class Meta:
+        model = TierPrice
+        fields = ["billing_interval", "currency", "amount", "stripe_price_id", "active"]
+
+    def clean_currency(self):
+        currency = (self.cleaned_data.get("currency") or "").strip().upper()
+        if not currency.isalpha() or len(currency) != 3:
+            raise forms.ValidationError(
+                _("Please enter a valid 3-letter currency code (e.g. USD, EUR).")
+            )
+        return currency
+
 
 TierPriceFormSet = inlineformset_factory(
     TierVersion,
     TierPrice,
+    form=TierPriceForm,
     fields=["billing_interval", "currency", "amount", "stripe_price_id", "active"],
     extra=1,
     can_delete=True,
@@ -233,6 +258,16 @@ class AddonDefinitionForm(forms.ModelForm):
                 )
                 % {"count": total_active},
             )
+
+    def clean_currency(self):
+        currency = self.cleaned_data.get("currency")
+        if currency:
+            currency = currency.strip().upper()
+            if not currency.isalpha() or len(currency) != 3:
+                raise forms.ValidationError(
+                    _("Please enter a valid 3-letter currency code (e.g. USD, EUR).")
+                )
+        return currency
 
     def clean(self):
         cleaned_data = super().clean()
@@ -452,7 +487,7 @@ class OrganizerAddonPurchaseForm(forms.Form):
 
         return cleaned_data
 
-    def save(self):
+    def save(self, commit=True, status=None):
         from django.utils.timezone import now
 
         from .models import (
@@ -462,25 +497,29 @@ class OrganizerAddonPurchaseForm(forms.Form):
             OrganizerAddon,
         )
 
+        if status is None:
+            status = AddonStatus.ACTIVE
         qty = self.cleaned_data.get("quantity") or 1
 
         if self.addon.assignment_scope == AddonAssignmentScope.EVENT:
             event = self.cleaned_data["event"]
-            assignment = EventAddon.objects.create(
+            assignment = EventAddon(
                 event=event,
                 addon=self.addon,
                 quantity=qty,
-                status=AddonStatus.ACTIVE,
+                status=status,
                 starts_at=now(),
             )
         else:
-            assignment = OrganizerAddon.objects.create(
+            assignment = OrganizerAddon(
                 organizer=self.organizer,
                 addon=self.addon,
                 quantity=qty,
-                status=AddonStatus.ACTIVE,
+                status=status,
                 starts_at=now(),
             )
+        if commit:
+            assignment.save()
         return assignment
 
 
@@ -541,16 +580,21 @@ class EventAddonPurchaseForm(forms.Form):
 
         return cleaned_data
 
-    def save(self):
+    def save(self, commit=True, status=None):
         from django.utils.timezone import now
 
         from .models import AddonStatus, EventAddon
 
+        if status is None:
+            status = AddonStatus.ACTIVE
         qty = self.cleaned_data.get("quantity") or 1
-        return EventAddon.objects.create(
+        assignment = EventAddon(
             event=self.event,
             addon=self.addon,
             quantity=qty,
-            status=AddonStatus.ACTIVE,
+            status=status,
             starts_at=now(),
         )
+        if commit:
+            assignment.save()
+        return assignment

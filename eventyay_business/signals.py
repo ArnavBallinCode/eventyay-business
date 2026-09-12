@@ -9,6 +9,8 @@ logger = logging.getLogger(__name__)
 
 addon_canceled = Signal()
 addon_expired = Signal()
+addon_purchased = Signal()
+subscription_purchased = Signal()
 
 try:
     from eventyay.control.signals import (

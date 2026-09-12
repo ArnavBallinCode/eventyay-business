@@ -1,5 +1,9 @@
+import logging
+from decimal import Decimal
 from django.contrib import messages
 from django.db import transaction
+
+logger = logging.getLogger(__name__)
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils.timezone import now
@@ -44,6 +48,7 @@ from .models import (
     Subscription,
     SubscriptionStatus,
     Tier,
+    TierPrice,
     TierStatus,
     TierVersion,
 )
@@ -53,7 +58,12 @@ from .services import (
     migrate_addon_assignments,
     migrate_tier_subscribers,
 )
-from .signals import addon_canceled
+from .signals import addon_canceled, subscription_purchased
+from .stripe_service import (
+    create_addon_checkout_session,
+    create_subscription_checkout_session,
+    is_stripe_configured,
+)
 
 
 class TierListView(AdministratorPermissionRequiredMixin, ListView):
@@ -446,6 +456,178 @@ class OrganizerPlanView(
         return ctx
 
 
+class OrganizerPlanUpgradeView(
+    OrganizerPermissionRequiredMixin, OrganizerDetailViewMixin, TemplateView
+):
+    permission = "can_change_organizer_settings"
+    template_name = "eventyay_business/organizer/plan_upgrade.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        organizer = self.request.organizer
+        current_time = now()
+        active_sub = (
+            Subscription.objects.filter(
+                organizer=organizer,
+                status=SubscriptionStatus.ACTIVE,
+                starts_at__lte=current_time,
+            )
+            .exclude(ends_at__lt=current_time)
+            .select_related("tier_version__tier")
+            .first()
+        )
+        ctx["current_subscription"] = active_sub
+        ctx["current_tier"] = (
+            active_sub.tier_version.tier
+            if active_sub and active_sub.tier_version
+            else None
+        )
+
+        tiers = (
+            Tier.objects.filter(status=TierStatus.PUBLISHED, is_public=True)
+            .order_by("display_order", "id")
+            .prefetch_related("versions__prices", "versions__entitlements")
+        )
+        tier_list = []
+        for tier in tiers:
+            latest_version = (
+                tier.versions.filter(published_at__isnull=False)
+                .order_by("-version")
+                .first()
+            )
+            if not latest_version:
+                continue
+            prices = list(
+                latest_version.prices.filter(active=True).order_by(
+                    "billing_interval", "amount"
+                )
+            )
+            entitlements = list(latest_version.entitlements.all())
+            is_current = (
+                active_sub is not None
+                and active_sub.tier_version is not None
+                and active_sub.tier_version.tier_id == tier.id
+            )
+            tier_list.append(
+                {
+                    "tier": tier,
+                    "version": latest_version,
+                    "prices": prices,
+                    "entitlements": entitlements,
+                    "is_current": is_current,
+                }
+            )
+
+        ctx["tier_list"] = tier_list
+        return ctx
+
+    def post(self, request, *args, **kwargs):
+        tier_price_id = request.POST.get("tier_price_id")
+        if not tier_price_id:
+            messages.error(request, _("Please select a plan."))
+            return redirect(
+                "plugins:eventyay_business:organizer.plan.upgrade",
+                organizer=request.organizer.slug,
+            )
+
+        tier_price = get_object_or_404(
+            TierPrice.objects.select_related("tier_version__tier"),
+            pk=tier_price_id,
+            active=True,
+            tier_version__tier__status=TierStatus.PUBLISHED,
+        )
+
+        organizer = request.organizer
+        amount = getattr(tier_price, "amount", None)
+        if amount is None:
+            amount = getattr(tier_price, "price", Decimal("0.00"))
+
+        if amount > 0 and is_stripe_configured():
+            success_url = request.build_absolute_uri(
+                reverse(
+                    "plugins:eventyay_business:checkout.success",
+                    kwargs={"organizer": organizer.slug},
+                )
+            )
+            cancel_url = request.build_absolute_uri(
+                reverse(
+                    "plugins:eventyay_business:checkout.cancel",
+                    kwargs={"organizer": organizer.slug},
+                )
+            )
+            try:
+                checkout_url = create_subscription_checkout_session(
+                    organizer=organizer,
+                    tier_price=tier_price,
+                    user=request.user,
+                    success_url=success_url,
+                    cancel_url=cancel_url,
+                )
+                if checkout_url:
+                    return redirect(checkout_url)
+                messages.error(
+                    request,
+                    _("Could not initiate payment session. Please try again later."),
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Failed to create Stripe checkout session for tier upgrade: %s",
+                    exc,
+                )
+                messages.error(
+                    request,
+                    _("Payment provider error: %(error)s") % {"error": str(exc)},
+                )
+            return redirect(
+                "plugins:eventyay_business:organizer.plan.upgrade",
+                organizer=organizer.slug,
+            )
+
+        # Free tier or offline switch
+        with transaction.atomic():
+            Organizer.objects.select_for_update().get(pk=organizer.pk)
+            active_sub = (
+                Subscription.objects.select_for_update()
+                .filter(organizer=organizer, status=SubscriptionStatus.ACTIVE)
+                .first()
+            )
+            if active_sub:
+                active_sub.tier_version = tier_price.tier_version
+                active_sub.billing_interval = tier_price.billing_interval
+                active_sub.currency = tier_price.currency
+                active_sub.save(
+                    update_fields=[
+                        "tier_version",
+                        "billing_interval",
+                        "currency",
+                        "updated_at",
+                    ]
+                )
+                sub = active_sub
+            else:
+                sub = Subscription.objects.create(
+                    organizer=organizer,
+                    tier_version=tier_price.tier_version,
+                    status=SubscriptionStatus.ACTIVE,
+                    billing_interval=tier_price.billing_interval,
+                    currency=tier_price.currency,
+                    starts_at=now(),
+                )
+            invalidate_entitlement_cache(organizer=organizer)
+            subscription_purchased.send(
+                sender=Subscription, instance=sub, user=request.user
+            )
+
+        messages.success(
+            request,
+            _("Successfully updated your plan to %(name)s.")
+            % {"name": tier_price.tier_version.tier.name},
+        )
+        return redirect(
+            "plugins:eventyay_business:organizer.plan", organizer=organizer.slug
+        )
+
+
 class OrganizerAddonPurchaseView(
     OrganizerPermissionRequiredMixin, OrganizerDetailViewMixin, FormView
 ):
@@ -516,13 +698,67 @@ class OrganizerAddonPurchaseView(
                             organizer=self.request.organizer.slug,
                         )
 
-            form.save()
+            is_paid_stripe = (
+                self.addon.price and self.addon.price > 0 and is_stripe_configured()
+            )
+            if is_paid_stripe:
+                assignment = form.save(commit=False, status=AddonStatus.PENDING)
+                assignment.status = AddonStatus.PENDING
+                assignment.save()
+            else:
+                form.save()
+                messages.success(
+                    self.request,
+                    _("The %(addon)s add-on has been added to your organisation.")
+                    % {"addon": self.addon.name},
+                )
+                return redirect(
+                    "plugins:eventyay_business:organizer.plan",
+                    organizer=self.request.organizer.slug,
+                )
 
-        messages.success(
-            self.request,
-            _("Add-on '%(name)s' has been successfully added to your plan.")
-            % {"name": self.addon.name},
+        # Transaction committed, lock released. Create Stripe checkout session.
+        success_url = self.request.build_absolute_uri(
+            reverse(
+                "plugins:eventyay_business:checkout.success",
+                kwargs={"organizer": self.request.organizer.slug},
+            )
         )
+        cancel_url = self.request.build_absolute_uri(
+            reverse(
+                "plugins:eventyay_business:checkout.cancel",
+                kwargs={"organizer": self.request.organizer.slug},
+            )
+        )
+        cancel_url = f"{cancel_url}?assignment_id={assignment.pk}&scope={self.addon.assignment_scope}"
+        try:
+            checkout_url = create_addon_checkout_session(
+                organizer=self.request.organizer,
+                addon=self.addon,
+                user=self.request.user,
+                quantity=form.cleaned_data.get("quantity", 1),
+                event=form.cleaned_data.get("event"),
+                success_url=success_url,
+                cancel_url=cancel_url,
+                assignment=assignment,
+            )
+            if checkout_url:
+                return redirect(checkout_url)
+            messages.error(
+                self.request,
+                _("Could not initiate payment session. Please try again later."),
+            )
+        except Exception as exc:
+            logger.exception(
+                "Failed to create Stripe checkout session for organizer addon: %s",
+                exc,
+            )
+            messages.error(
+                self.request,
+                _("Payment provider error: %(error)s") % {"error": str(exc)},
+            )
+        if assignment.pk and assignment.status == AddonStatus.PENDING:
+            assignment.delete()
         return redirect(
             "plugins:eventyay_business:organizer.plan",
             organizer=self.request.organizer.slug,
@@ -709,13 +945,74 @@ class EventDashboardAddonPurchaseView(EventPermissionRequiredMixin, FormView):
                         event=self.request.event.slug,
                     )
 
-            form.save()
+            is_paid_stripe = (
+                self.addon.price and self.addon.price > 0 and is_stripe_configured()
+            )
+            if is_paid_stripe:
+                assignment = form.save(commit=False, status=AddonStatus.PENDING)
+                assignment.status = AddonStatus.PENDING
+                assignment.save()
+            else:
+                form.save()
+                messages.success(
+                    self.request,
+                    _("The %(addon)s add-on has been added to %(event)s.")
+                    % {"addon": self.addon.name, "event": self.request.event.name},
+                )
+                return redirect(
+                    "plugins:eventyay_business:event.addons",
+                    organizer=self.request.organizer.slug,
+                    event=self.request.event.slug,
+                )
 
-        messages.success(
-            self.request,
-            _("Add-on '%(name)s' has been successfully activated for %(event)s.")
-            % {"name": self.addon.name, "event": self.request.event.name},
+        # Transaction committed, lock released. Create Stripe checkout session.
+        success_url = self.request.build_absolute_uri(
+            reverse(
+                "plugins:eventyay_business:event.checkout.success",
+                kwargs={
+                    "organizer": self.request.organizer.slug,
+                    "event": self.request.event.slug,
+                },
+            )
         )
+        cancel_url = self.request.build_absolute_uri(
+            reverse(
+                "plugins:eventyay_business:event.checkout.cancel",
+                kwargs={
+                    "organizer": self.request.organizer.slug,
+                    "event": self.request.event.slug,
+                },
+            )
+        )
+        cancel_url = f"{cancel_url}?assignment_id={assignment.pk}&scope=event"
+        try:
+            checkout_url = create_addon_checkout_session(
+                organizer=self.request.organizer,
+                addon=self.addon,
+                user=self.request.user,
+                quantity=form.cleaned_data.get("quantity", 1),
+                event=self.request.event,
+                success_url=success_url,
+                cancel_url=cancel_url,
+                assignment=assignment,
+            )
+            if checkout_url:
+                return redirect(checkout_url)
+            messages.error(
+                self.request,
+                _("Could not initiate payment session. Please try again later."),
+            )
+        except Exception as exc:
+            logger.exception(
+                "Failed to create Stripe checkout session for event addon: %s",
+                exc,
+            )
+            messages.error(
+                self.request,
+                _("Payment provider error: %(error)s") % {"error": str(exc)},
+            )
+        if assignment.pk and assignment.status == AddonStatus.PENDING:
+            assignment.delete()
         return redirect(
             "plugins:eventyay_business:event.addons",
             organizer=self.request.organizer.slug,
