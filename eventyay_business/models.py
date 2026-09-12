@@ -24,6 +24,9 @@ class Tier(models.Model):
     display_order = models.PositiveIntegerField(
         default=0, verbose_name=_("Display order")
     )
+    stripe_product_id = models.CharField(
+        max_length=255, blank=True, null=True, verbose_name=_("Stripe product ID")
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Created at"))
     updated_at = models.DateTimeField(auto_now=True, verbose_name=_("Updated at"))
 
@@ -311,6 +314,7 @@ class AddonPricingMode(models.TextChoices):
 class AddonStatus(models.TextChoices):
     PENDING = "pending", _("Pending")
     ACTIVE = "active", _("Active")
+    PAST_DUE = "past_due", _("Past Due")
     EXPIRED = "expired", _("Expired")
     CANCELED = "canceled", _("Canceled")
 

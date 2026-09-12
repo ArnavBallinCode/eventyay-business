@@ -29,6 +29,8 @@ from eventyay_business.stripe_service import (
     get_or_create_stripe_customer,
     is_stripe_configured,
     process_webhook_event,
+    sync_addon_to_stripe,
+    sync_tier_price_to_stripe,
 )
 from eventyay_business.views_stripe import stripe_business_webhook_view
 
@@ -203,6 +205,7 @@ def test_create_addon_checkout_session(setup_data):
                 assert kwargs["line_items"][0]["quantity"] == 2
                 assert kwargs["line_items"][0]["price_data"]["unit_amount"] == 2500
                 assert kwargs["metadata"]["type"] == "addon_purchase"
+                assert kwargs["metadata"]["scope"] == "organizer"
                 assert kwargs["metadata"]["organizer_slug"] == organizer.slug
 
                 # One-time event addon
@@ -219,6 +222,7 @@ def test_create_addon_checkout_session(setup_data):
                 args, kwargs = mock_session.call_args
                 assert kwargs["mode"] == "payment"
                 assert kwargs["line_items"][0]["price_data"]["unit_amount"] == 1500
+                assert kwargs["metadata"]["scope"] == "event"
                 assert kwargs["metadata"]["event_slug"] == event.slug
 
 
@@ -252,6 +256,7 @@ def test_create_subscription_checkout_session(setup_data):
                 assert kwargs["customer"] == "cus_123"
                 assert kwargs["line_items"][0]["price_data"]["unit_amount"] == 9900
                 assert kwargs["metadata"]["type"] == "subscription"
+                assert kwargs["metadata"]["scope"] == "organizer"
                 assert kwargs["metadata"]["tier_price_id"] == str(tier_price.pk)
 
 
@@ -534,3 +539,238 @@ def test_addon_purchase_views_stripe_redirect(admin_client, admin_user, setup_da
                 event=event, addon=one_time_event_addon, status=AddonStatus.PENDING
             ).first()
             assert pending_ea is not None
+
+
+@pytest.mark.django_db
+def test_sync_tier_price_to_stripe(setup_data):
+    _, _, _, tier, tier_version, tier_price, _, _, _ = setup_data
+
+    with patch(
+        "eventyay_business.stripe_service.get_stripe_secret_key_safe",
+        return_value="sk_test_123",
+    ):
+        with patch("stripe.Product.create") as mock_prod, patch(
+            "stripe.Price.create"
+        ) as mock_price:
+            mock_prod.return_value = MagicMock(id="prod_tier_test_123")
+            mock_price.return_value = MagicMock(id="price_tier_test_123")
+
+            price_id = sync_tier_price_to_stripe(tier_price)
+            assert price_id == "price_tier_test_123"
+
+            tier.refresh_from_db()
+            tier_price.refresh_from_db()
+            assert tier.stripe_product_id == "prod_tier_test_123"
+            assert tier_price.stripe_price_id == "price_tier_test_123"
+
+            # Re-calling returns existing price_id without recreating
+            mock_price.reset_mock()
+            mock_prod.reset_mock()
+            assert sync_tier_price_to_stripe(tier_price) == "price_tier_test_123"
+            mock_price.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_sync_addon_to_stripe(setup_data):
+    _, _, _, _, _, _, recurring_addon, _, _ = setup_data
+
+    with patch(
+        "eventyay_business.stripe_service.get_stripe_secret_key_safe",
+        return_value="sk_test_123",
+    ):
+        with patch("stripe.Product.create") as mock_prod, patch(
+            "stripe.Price.create"
+        ) as mock_price:
+            mock_prod.return_value = MagicMock(id="prod_addon_test_123")
+            mock_price.return_value = MagicMock(id="price_addon_test_123")
+
+            price_id = sync_addon_to_stripe(recurring_addon)
+            assert price_id == "price_addon_test_123"
+
+            recurring_addon.refresh_from_db()
+            assert recurring_addon.stripe_product_id == "prod_addon_test_123"
+            assert recurring_addon.stripe_price_id == "price_addon_test_123"
+
+
+@pytest.mark.django_db
+def test_invoice_payment_failed_and_paid_updates_linked_addons(setup_data):
+    (
+        organizer,
+        event,
+        _,
+        _,
+        tier_version,
+        _,
+        recurring_addon,
+        one_time_event_addon,
+        _,
+    ) = setup_data
+    organizer.subscriptions.all().delete()
+
+    sub = Subscription.objects.create(
+        organizer=organizer,
+        tier_version=tier_version,
+        status=SubscriptionStatus.ACTIVE,
+        starts_at=now(),
+        stripe_subscription_id="sub_test_shared_invoice",
+    )
+    org_addon = OrganizerAddon.objects.create(
+        organizer=organizer,
+        addon=recurring_addon,
+        status=AddonStatus.ACTIVE,
+        stripe_subscription_id="sub_test_shared_invoice",
+    )
+    ea_addon = EventAddon.objects.create(
+        event=event,
+        addon=one_time_event_addon,
+        status=AddonStatus.ACTIVE,
+        stripe_subscription_id="sub_test_shared_invoice",
+    )
+
+    # 1. invoice.payment_failed marks both subscription and linked add-ons PAST_DUE
+    process_webhook_event(
+        "invoice.payment_failed", {"subscription": "sub_test_shared_invoice"}
+    )
+    sub.refresh_from_db()
+    org_addon.refresh_from_db()
+    ea_addon.refresh_from_db()
+
+    assert sub.status == SubscriptionStatus.PAST_DUE
+    assert org_addon.status == AddonStatus.PAST_DUE
+    assert ea_addon.status == AddonStatus.PAST_DUE
+
+    # 2. invoice.paid restores both subscription and linked add-ons back to ACTIVE
+    process_webhook_event("invoice.paid", {"subscription": "sub_test_shared_invoice"})
+    sub.refresh_from_db()
+    org_addon.refresh_from_db()
+    ea_addon.refresh_from_db()
+
+    assert sub.status == SubscriptionStatus.ACTIVE
+    assert org_addon.status == AddonStatus.ACTIVE
+    assert ea_addon.status == AddonStatus.ACTIVE
+
+
+@pytest.mark.django_db
+@override_settings(SITE_URL="https://testserver")
+def test_addon_purchase_views_stripe_error_cleanup(
+    setup_data, admin_user, admin_client
+):
+    organizer, _, _, _, _, _, recurring_addon, _, _ = setup_data
+
+    session = admin_client.session
+    session.save()
+    StaffSession.objects.create(
+        user=admin_user,
+        session_key=session.session_key,
+        comment="test",
+    )
+    admin_user.is_staff = True
+    admin_user.save()
+
+    purchase_url = reverse(
+        "plugins:eventyay_business:organizer.addon.purchase",
+        kwargs={"organizer": organizer.slug, "pk": recurring_addon.pk},
+    )
+
+    # When Stripe raises an API or network exception
+    with patch("eventyay_business.views.is_stripe_configured", return_value=True):
+        with patch(
+            "eventyay_business.views.create_addon_checkout_session",
+            side_effect=Exception("Stripe API connection timeout"),
+        ):
+            resp = admin_client.post(purchase_url, {"quantity": 1})
+            # Redirects back to plan with error message
+            assert resp.status_code == 302
+            assert (
+                reverse(
+                    "plugins:eventyay_business:organizer.plan",
+                    kwargs={"organizer": organizer.slug},
+                )
+                in resp.url
+            )
+            # Assert pending assignment was cleaned up / deleted
+            assert not OrganizerAddon.objects.filter(
+                organizer=organizer, addon=recurring_addon, status=AddonStatus.PENDING
+            ).exists()
+
+
+@pytest.mark.django_db
+@override_settings(SITE_URL="https://testserver")
+def test_organizer_plan_upgrade_view_flow(setup_data, admin_user, admin_client):
+    organizer, _, _, tier, tier_version, tier_price, _, _, _ = setup_data
+
+    session = admin_client.session
+    session.save()
+    StaffSession.objects.create(
+        user=admin_user,
+        session_key=session.session_key,
+        comment="test",
+    )
+    admin_user.is_staff = True
+    admin_user.save()
+
+    upgrade_url = reverse(
+        "plugins:eventyay_business:organizer.plan.upgrade",
+        kwargs={"organizer": organizer.slug},
+    )
+
+    tier.is_public = True
+    tier.save()
+    tier_version.published_at = now()
+    tier_version.save()
+
+    # 1. GET upgrade view
+    resp = admin_client.get(upgrade_url)
+    assert resp.status_code == 200
+    assert tier.name.encode() in resp.content
+
+    # Create a free tier plan
+    free_tier = Tier.objects.create(
+        name="Free Community",
+        slug="free-community",
+        status=TierStatus.PUBLISHED,
+        is_public=True,
+    )
+    free_version = TierVersion.objects.create(
+        tier=free_tier, version=1, published_at=now()
+    )
+    free_price = TierPrice.objects.create(
+        tier_version=free_version,
+        billing_interval=BillingInterval.MONTHLY,
+        amount=Decimal("0.00"),
+        currency="USD",
+        active=True,
+    )
+
+    # 2. POST with free tier: switches subscription immediately
+    resp = admin_client.post(upgrade_url, {"tier_price_id": free_price.id})
+    assert resp.status_code == 302
+    assert (
+        reverse(
+            "plugins:eventyay_business:organizer.plan",
+            kwargs={"organizer": organizer.slug},
+        )
+        in resp.url
+    )
+
+    active_sub = Subscription.objects.filter(
+        organizer=organizer, status=SubscriptionStatus.ACTIVE
+    ).first()
+    assert active_sub is not None
+    assert active_sub.tier_version == free_version
+
+    # 3. POST with paid tier when Stripe configured: redirects to Stripe Checkout
+    tier.is_public = True
+    tier.save()
+    tier_version.published_at = now()
+    tier_version.save()
+
+    with patch("eventyay_business.views.is_stripe_configured", return_value=True):
+        with patch(
+            "eventyay_business.views.create_subscription_checkout_session",
+            return_value="https://checkout.stripe.com/c/pay/cs_tier_upgrade_123",
+        ) as mock_checkout:
+            resp = admin_client.post(upgrade_url, {"tier_price_id": tier_price.id})
+            assert resp.status_code == 302
+            assert resp.url == "https://checkout.stripe.com/c/pay/cs_tier_upgrade_123"
+            mock_checkout.assert_called_once()

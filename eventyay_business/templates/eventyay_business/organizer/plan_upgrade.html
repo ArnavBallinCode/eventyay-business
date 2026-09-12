@@ -1,0 +1,106 @@
+{% extends "pretixcontrol/organizers/base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Change / Upgrade Plan" %}{% endblock %}
+
+{% block inner %}
+    <div class="page-header">
+        <a href="{% url 'plugins:eventyay_business:organizer.plan' organizer=request.organizer.slug %}" class="btn btn-default pull-right">
+            <i class="fa fa-arrow-left"></i> {% trans "Back to Plan & Usage" %}
+        </a>
+        <h1>{% trans "Change / Upgrade Plan" %}</h1>
+    </div>
+
+    {% if current_tier %}
+        <div class="alert alert-info">
+            {% blocktrans with tier_name=current_tier.name %}
+                Your organization is currently on the <strong>{{ tier_name }}</strong> plan.
+            {% endblocktrans %}
+        </div>
+    {% endif %}
+
+    <div class="row">
+        {% for item in tier_list %}
+            <div class="col-md-4 col-sm-6">
+                <div class="panel {% if item.is_current %}panel-primary{% else %}panel-default{% endif %}" style="display: flex; flex-direction: column; height: 100%;">
+                    <div class="panel-heading text-center">
+                        <h3 class="panel-title" style="font-size: 20px; font-weight: bold;">
+                            {{ item.tier.name }}
+                        </h3>
+                        {% if item.is_current %}
+                            <span class="label label-success" style="margin-top: 5px; display: inline-block;">
+                                <i class="fa fa-check"></i> {% trans "Current Plan" %}
+                            </span>
+                        {% endif %}
+                    </div>
+                    <div class="panel-body" style="flex: 1;">
+                        {% if item.tier.description %}
+                            <p class="text-muted">{{ item.tier.description }}</p>
+                        {% endif %}
+
+                        {% if item.entitlements %}
+                            <hr>
+                            <ul class="list-unstyled" style="line-height: 2;">
+                                {% for ent in item.entitlements %}
+                                    <li>
+                                        <i class="fa fa-check-circle text-success"></i>
+                                        <strong>{{ ent.capability }}</strong>:
+                                        {% if ent.value %}
+                                            {{ ent.value }}{% if ent.unit %} {{ ent.unit }}{% endif %}
+                                        {% else %}
+                                            {% trans "Included" %}
+                                        {% endif %}
+                                    </li>
+                                {% endfor %}
+                            </ul>
+                        {% endif %}
+                    </div>
+
+                    <div class="panel-footer" style="background: #fafafa;">
+                        {% if item.prices %}
+                            {% for price in item.prices %}
+                                <form method="post" action="{% url 'plugins:eventyay_business:organizer.plan.upgrade' organizer=request.organizer.slug %}" style="margin-bottom: 8px;">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="tier_price_id" value="{{ price.id }}">
+                                    <div class="row" style="align-items: center; display: flex;">
+                                        <div class="col-xs-7">
+                                            <strong>{{ price.amount }} {{ price.currency }}</strong>
+                                            <div class="text-muted" style="font-size: 11px;">
+                                                / {{ price.get_billing_interval_display }}
+                                            </div>
+                                        </div>
+                                        <div class="col-xs-5 text-right">
+                                            {% if item.is_current %}
+                                                <button type="button" class="btn btn-default btn-sm btn-block" disabled>
+                                                    {% trans "Current" %}
+                                                </button>
+                                            {% elif price.amount > 0 %}
+                                                <button type="submit" class="btn btn-primary btn-sm btn-block">
+                                                    <i class="fa fa-credit-card"></i> {% trans "Select" %}
+                                                </button>
+                                            {% else %}
+                                                <button type="submit" class="btn btn-success btn-sm btn-block">
+                                                    <i class="fa fa-check"></i> {% trans "Free" %}
+                                                </button>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </form>
+                            {% endfor %}
+                        {% else %}
+                            <p class="text-muted text-center" style="margin: 5px 0;">
+                                {% trans "No pricing options available." %}
+                            </p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        {% empty %}
+            <div class="col-xs-12">
+                <div class="alert alert-warning">
+                    {% trans "No public subscription plans are currently available." %}
+                </div>
+            </div>
+        {% endfor %}
+    </div>
+{% endblock %}

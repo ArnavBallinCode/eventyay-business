@@ -106,6 +106,147 @@ def get_or_create_stripe_customer(organizer, user=None) -> Optional[str]:
         return None
 
 
+def sync_tier_price_to_stripe(tier_price: TierPrice) -> Optional[str]:
+    """
+    Ensure the Tier and TierPrice exist in Stripe as Product and Price.
+    Returns the stripe_price_id.
+    """
+    secret_key = get_stripe_secret_key_safe()
+    if not secret_key or stripe is None or not tier_price:
+        return getattr(tier_price, "stripe_price_id", None)
+
+    stripe.api_key = secret_key
+    tier_version = tier_price.tier_version
+    tier = tier_version.tier
+
+    # 1. Product
+    product_id = getattr(tier, "stripe_product_id", None)
+    if not product_id:
+        try:
+            prod = stripe.Product.create(
+                name=f"{tier.name} (v{tier_version.version})",
+                description=tier.description or "",
+                metadata={
+                    "tier_slug": tier.slug,
+                    "tier_version": str(tier_version.version),
+                },
+            )
+            product_id = prod.id
+            if hasattr(tier, "stripe_product_id"):
+                tier.stripe_product_id = product_id
+                tier.save(update_fields=["stripe_product_id", "updated_at"])
+        except Exception as exc:
+            logger.warning(
+                "Failed to create Stripe product for tier %s: %s", tier.slug, exc
+            )
+            return getattr(tier_price, "stripe_price_id", None)
+
+    # 2. Price
+    if getattr(tier_price, "stripe_price_id", None):
+        return tier_price.stripe_price_id
+
+    amount_val = getattr(tier_price, "amount", None)
+    if amount_val is None:
+        amount_val = getattr(tier_price, "price", Decimal("0.00"))
+    unit_amount = int(Decimal(str(amount_val)) * 100)
+    interval_val = getattr(tier_price, "billing_interval", None) or getattr(
+        tier_price, "interval", BillingInterval.MONTHLY
+    )
+    interval = (
+        "month"
+        if interval_val in ("month", "monthly", BillingInterval.MONTHLY)
+        else "year"
+    )
+
+    try:
+        price = stripe.Price.create(
+            product=product_id,
+            unit_amount=unit_amount,
+            currency=(tier_price.currency or "usd").lower(),
+            recurring={"interval": interval},
+            metadata={
+                "tier_price_id": str(tier_price.id),
+                "tier_slug": tier.slug,
+            },
+        )
+        tier_price.stripe_price_id = price.id
+        tier_price.save(update_fields=["stripe_price_id"])
+        return price.id
+    except Exception as exc:
+        logger.warning(
+            "Failed to create Stripe price for tier price %s: %s", tier_price.id, exc
+        )
+        return None
+
+
+def sync_addon_to_stripe(addon: AddonDefinition) -> Optional[str]:
+    """
+    Ensure the AddonDefinition exists in Stripe as Product and Price.
+    Returns the stripe_price_id.
+    """
+    secret_key = get_stripe_secret_key_safe()
+    if (
+        not secret_key
+        or stripe is None
+        or not addon
+        or not addon.price
+        or addon.price <= 0
+    ):
+        return getattr(addon, "stripe_price_id", None)
+
+    stripe.api_key = secret_key
+
+    # 1. Product
+    product_id = getattr(addon, "stripe_product_id", None)
+    if not product_id:
+        try:
+            prod = stripe.Product.create(
+                name=addon.name,
+                description=addon.description or "",
+                metadata={
+                    "addon_slug": addon.slug,
+                    "capability": addon.capability,
+                    "assignment_scope": addon.assignment_scope,
+                },
+            )
+            product_id = prod.id
+            addon.stripe_product_id = product_id
+            addon.save(update_fields=["stripe_product_id", "updated_at"])
+        except Exception as exc:
+            logger.warning(
+                "Failed to create Stripe product for addon %s: %s", addon.slug, exc
+            )
+            return getattr(addon, "stripe_price_id", None)
+
+    # 2. Price
+    if getattr(addon, "stripe_price_id", None):
+        return addon.stripe_price_id
+
+    unit_amount = int(Decimal(str(addon.price)) * 100)
+    price_kwargs = {
+        "product": product_id,
+        "unit_amount": unit_amount,
+        "currency": (addon.currency or "usd").lower(),
+        "metadata": {
+            "addon_id": str(addon.id),
+            "addon_slug": addon.slug,
+        },
+    }
+    if addon.pricing_mode == AddonPricingMode.RECURRING:
+        price_kwargs["recurring"] = {"interval": "month"}
+
+    try:
+        price = stripe.Price.create(**price_kwargs)
+        addon.stripe_price_id = price.id
+        addon.save(update_fields=["stripe_price_id", "updated_at"])
+        return price.id
+    except Exception as exc:
+        logger.warning(
+            "Failed to create Stripe price for addon %s: %s", addon.slug, exc
+        )
+        return None
+
+
 def create_addon_checkout_session(
     organizer,
     addon: AddonDefinition,
@@ -131,6 +272,7 @@ def create_addon_checkout_session(
 
     metadata = {
         "type": "addon_purchase",
+        "scope": addon.assignment_scope,
         "organizer_slug": organizer.slug,
         "event_slug": event.slug if event else "",
         "addon_id": str(addon.pk),
@@ -139,23 +281,24 @@ def create_addon_checkout_session(
         "assignment_id": str(assignment.pk) if assignment else "",
     }
 
-    if addon.pricing_mode == AddonPricingMode.RECURRING:
-        mode = "subscription"
-        price_data = {
-            "currency": currency,
-            "unit_amount": unit_amount,
-            "product_data": {"name": f"{addon.name} (Add-on)"},
-            "recurring": {"interval": "month"},
-        }
-    else:
-        mode = "payment"
-        price_data = {
-            "currency": currency,
-            "unit_amount": unit_amount,
-            "product_data": {"name": f"{addon.name} (Add-on)"},
-        }
+    mode = (
+        "subscription"
+        if addon.pricing_mode == AddonPricingMode.RECURRING
+        else "payment"
+    )
 
-    line_items = [{"price_data": price_data, "quantity": quantity}]
+    price_id = addon.stripe_price_id or sync_addon_to_stripe(addon)
+    if price_id:
+        line_items = [{"price": price_id, "quantity": quantity}]
+    else:
+        price_data = {
+            "currency": currency,
+            "unit_amount": unit_amount,
+            "product_data": {"name": f"{addon.name} (Add-on)"},
+        }
+        if mode == "subscription":
+            price_data["recurring"] = {"interval": "month"}
+        line_items = [{"price_data": price_data, "quantity": quantity}]
 
     session_kwargs = {
         "payment_method_types": ["card"],
@@ -208,20 +351,24 @@ def create_subscription_checkout_session(
 
     metadata = {
         "type": "subscription",
+        "scope": "organizer",
         "organizer_slug": organizer.slug,
         "tier_price_id": str(tier_price.pk),
         "tier_version_id": str(tier_price.tier_version.pk),
         "user_id": str(user.pk) if user else "",
     }
 
-    price_data = {
-        "currency": currency,
-        "unit_amount": unit_amount,
-        "product_data": {"name": f"{tier_price.tier_version.tier.name} Plan"},
-        "recurring": {"interval": interval},
-    }
-
-    line_items = [{"price_data": price_data, "quantity": 1}]
+    price_id = tier_price.stripe_price_id or sync_tier_price_to_stripe(tier_price)
+    if price_id:
+        line_items = [{"price": price_id, "quantity": 1}]
+    else:
+        price_data = {
+            "currency": currency,
+            "unit_amount": unit_amount,
+            "product_data": {"name": f"{tier_price.tier_version.tier.name} Plan"},
+            "recurring": {"interval": interval},
+        }
+        line_items = [{"price_data": price_data, "quantity": 1}]
 
     session_kwargs = {
         "payment_method_types": ["card"],
@@ -619,6 +766,27 @@ def process_invoice_payment_failed(invoice_data: dict):
                 sub.save()
                 invalidate_entitlement_cache(organizer=sub.organizer)
 
+            # Also mark linked recurring add-ons past due
+            org_addons = OrganizerAddon.objects.select_for_update().filter(
+                stripe_subscription_id=stripe_sub_id,
+                status=AddonStatus.ACTIVE,
+            )
+            for oa in org_addons:
+                oa.status = AddonStatus.PAST_DUE
+                oa.save(update_fields=["status", "updated_at"])
+                invalidate_entitlement_cache(organizer=oa.organizer)
+
+            event_addons = EventAddon.objects.select_for_update().filter(
+                stripe_subscription_id=stripe_sub_id,
+                status=AddonStatus.ACTIVE,
+            )
+            for ea in event_addons:
+                ea.status = AddonStatus.PAST_DUE
+                ea.save(update_fields=["status", "updated_at"])
+                invalidate_entitlement_cache(
+                    organizer=ea.event.organizer, event=ea.event
+                )
+
 
 def process_invoice_paid(invoice_data: dict):
     stripe_sub_id = invoice_data.get("subscription")
@@ -631,7 +799,28 @@ def process_invoice_paid(invoice_data: dict):
                 .filter(stripe_subscription_id=stripe_sub_id)
                 .first()
             )
-            if sub:
+            if sub and sub.status == SubscriptionStatus.PAST_DUE:
                 sub.status = SubscriptionStatus.ACTIVE
                 sub.save()
                 invalidate_entitlement_cache(organizer=sub.organizer)
+
+            # Also restore linked recurring add-ons back to ACTIVE
+            org_addons = OrganizerAddon.objects.select_for_update().filter(
+                stripe_subscription_id=stripe_sub_id,
+                status=AddonStatus.PAST_DUE,
+            )
+            for oa in org_addons:
+                oa.status = AddonStatus.ACTIVE
+                oa.save(update_fields=["status", "updated_at"])
+                invalidate_entitlement_cache(organizer=oa.organizer)
+
+            event_addons = EventAddon.objects.select_for_update().filter(
+                stripe_subscription_id=stripe_sub_id,
+                status=AddonStatus.PAST_DUE,
+            )
+            for ea in event_addons:
+                ea.status = AddonStatus.ACTIVE
+                ea.save(update_fields=["status", "updated_at"])
+                invalidate_entitlement_cache(
+                    organizer=ea.event.organizer, event=ea.event
+                )
