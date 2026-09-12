@@ -292,16 +292,28 @@ class Subscription(models.Model):
             and self.status == SubscriptionStatus.ACTIVE
         )
 
-    def is_in_grace_period(self, grace_days: int = 7) -> bool:
+    @property
+    def grace_period_days(self) -> int:
+        from .services import get_grace_period_days
+
+        return get_grace_period_days(self)
+
+    def is_in_grace_period(self, grace_days: Optional[int] = None) -> bool:
         if self.status != SubscriptionStatus.PAST_DUE:
             return False
         if not self.past_due_since:
             return True
+        if grace_days is None:
+            grace_days = self.grace_period_days
         return now() <= self.past_due_since + timedelta(days=grace_days)
 
-    def grace_period_ends_at(self, grace_days: int = 7) -> Optional[datetime]:
+    def grace_period_ends_at(
+        self, grace_days: Optional[int] = None
+    ) -> Optional[datetime]:
         if self.status != SubscriptionStatus.PAST_DUE or not self.past_due_since:
             return None
+        if grace_days is None:
+            grace_days = self.grace_period_days
         return self.past_due_since + timedelta(days=grace_days)
 
 

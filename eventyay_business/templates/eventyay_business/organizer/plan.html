@@ -36,8 +36,8 @@
                         <i class="fa fa-exclamation-triangle"></i>
                         <strong>{% trans "Payment Past Due:" %}</strong>
                         {% if subscription.is_in_grace_period %}
-                            {% blocktrans with end_date=subscription.grace_period_ends_at|date:"SHORT_DATE_FORMAT" %}
-                                Your recent renewal payment failed. You are in a 7-day grace period ending on {{ end_date }}. Your features remain active, but please update your payment method to avoid service interruption.
+                            {% blocktrans with end_date=subscription.grace_period_ends_at|date:"SHORT_DATE_FORMAT" days=subscription.grace_period_days %}
+                                Your recent renewal payment failed. You are in a {{ days }}-day grace period ending on {{ end_date }}. Your features remain active, but please update your payment method to avoid service interruption.
                             {% endblocktrans %}
                         {% else %}
                             {% trans "Your grace period has expired. Please update your payment method immediately to restore full plan features." %}

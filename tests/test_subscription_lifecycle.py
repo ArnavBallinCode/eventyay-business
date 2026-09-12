@@ -555,4 +555,121 @@ def test_plan_view_banners(client, lifecycle_data):
     assert res_pd.status_code == 200
     content_pd = res_pd.content.decode("utf-8")
     assert "Payment Past Due:" in content_pd
-    assert "grace period" in content_pd
+    assert "7-day grace period" in content_pd
+
+
+@pytest.mark.django_db
+@override_settings(EVENTYAY_BUSINESS_GRACE_PERIOD_DAYS=14)
+def test_configurable_grace_period_via_django_settings(lifecycle_data):
+    (
+        organizer,
+        free_tier,
+        free_version,
+        free_price,
+        pro_tier,
+        pro_version,
+        pro_price,
+        user,
+    ) = lifecycle_data
+
+    sub = Subscription.objects.get(organizer=organizer)
+    sub.status = SubscriptionStatus.PAST_DUE
+    sub.past_due_since = now() - timedelta(days=10)
+    sub.save()
+
+    assert sub.grace_period_days == 14
+    assert sub.is_in_grace_period() is True
+
+    sub.past_due_since = now() - timedelta(days=15)
+    sub.save()
+    assert sub.is_in_grace_period() is False
+
+
+@pytest.mark.django_db
+def test_configurable_grace_period_via_subscription_snapshot(lifecycle_data):
+    (
+        organizer,
+        free_tier,
+        free_version,
+        free_price,
+        pro_tier,
+        pro_version,
+        pro_price,
+        user,
+    ) = lifecycle_data
+
+    sub = Subscription.objects.get(organizer=organizer)
+    sub.status = SubscriptionStatus.PAST_DUE
+    sub.configuration_snapshot = {"grace_period_days": 3}
+    sub.past_due_since = now() - timedelta(days=2)
+    sub.save()
+
+    assert sub.grace_period_days == 3
+    assert sub.is_in_grace_period() is True
+
+    sub.past_due_since = now() - timedelta(days=4)
+    sub.save()
+    assert sub.is_in_grace_period() is False
+
+
+@pytest.mark.django_db
+def test_configurable_grace_period_via_tier_version_snapshot(lifecycle_data):
+    (
+        organizer,
+        free_tier,
+        free_version,
+        free_price,
+        pro_tier,
+        pro_version,
+        pro_price,
+        user,
+    ) = lifecycle_data
+
+    pro_version.configuration_snapshot = {"grace_period_days": 5}
+    pro_version.save()
+
+    sub = Subscription.objects.get(organizer=organizer)
+    sub.tier_version = pro_version
+    sub.status = SubscriptionStatus.PAST_DUE
+    sub.past_due_since = now() - timedelta(days=4)
+    sub.save()
+
+    assert sub.grace_period_days == 5
+    assert sub.is_in_grace_period() is True
+
+    sub.past_due_since = now() - timedelta(days=6)
+    sub.save()
+    assert sub.is_in_grace_period() is False
+
+
+@pytest.mark.django_db
+@override_settings(
+    SITE_URL="https://testserver", EVENTYAY_BUSINESS_GRACE_PERIOD_DAYS=14
+)
+def test_plan_view_renders_configured_grace_period(client, lifecycle_data):
+    (
+        organizer,
+        free_tier,
+        free_version,
+        free_price,
+        pro_tier,
+        pro_version,
+        pro_price,
+        user,
+    ) = lifecycle_data
+    client.force_login(user)
+
+    sub = Subscription.objects.get(organizer=organizer)
+    sub.tier_version = pro_version
+    sub.status = SubscriptionStatus.PAST_DUE
+    sub.past_due_since = now() - timedelta(days=5)
+    sub.save()
+
+    url = reverse(
+        "plugins:eventyay_business:organizer.plan",
+        kwargs={"organizer": organizer.slug},
+    )
+    res = client.get(url)
+    assert res.status_code == 200
+    content = res.content.decode("utf-8")
+    assert "14-day grace period" in content

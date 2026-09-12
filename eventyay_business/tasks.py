@@ -182,7 +182,7 @@ def manage_subscription_lifecycles():
     """
     Scans subscriptions to:
     1. Apply scheduled downgrades where pending_tier_version is set and pending_change_at <= now().
-    2. Expire past-due subscriptions where grace period has ended (now() > past_due_since + 7 days).
+    2. Expire past-due subscriptions where the configured grace period has ended.
     Invalidates entitlement cache and emits lifecycle signals.
     """
     from .models import Subscription, SubscriptionStatus
