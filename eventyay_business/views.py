@@ -7,6 +7,7 @@ from django.utils.translation import gettext_lazy as _
 from django.views.generic import (
     CreateView,
     DetailView,
+    FormView,
     ListView,
     TemplateView,
     UpdateView,
@@ -25,6 +26,7 @@ from .forms import (
     AddonDefinitionForm,
     EventAddonForm,
     OrganizerAddonForm,
+    OrganizerAddonPurchaseForm,
     SubscriptionAdminForm,
     TierEntitlementFormSet,
     TierForm,
@@ -398,7 +400,75 @@ class OrganizerPlanView(
             .order_by("event__name", "addon__name")
         )
 
+        available_addons = list(
+            AddonDefinition.objects.filter(
+                active=True,
+                public=True,
+            ).order_by("assignment_scope", "name")
+        )
+
+        active_org_addon_ids = set(
+            OrganizerAddon.objects.filter(
+                organizer=organizer,
+                addon__active=True,
+                status=AddonStatus.ACTIVE,
+                starts_at__lte=current_time,
+            )
+            .exclude(ends_at__lt=current_time)
+            .values_list("addon_id", flat=True)
+        )
+
+        for addon in available_addons:
+            addon.is_active_for_organizer = addon.id in active_org_addon_ids
+
+        ctx["available_addons"] = available_addons
         return ctx
+
+
+class OrganizerAddonPurchaseView(
+    OrganizerPermissionRequiredMixin, OrganizerDetailViewMixin, FormView
+):
+    permission = "can_change_organizer_settings"
+    template_name = "eventyay_business/organizer/addon_purchase.html"
+    form_class = OrganizerAddonPurchaseForm
+
+    def get_addon(self):
+        return get_object_or_404(
+            AddonDefinition,
+            pk=self.kwargs["pk"],
+            active=True,
+            public=True,
+        )
+
+    def dispatch(self, request, *args, **kwargs):
+        self.addon = self.get_addon()
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["organizer"] = self.request.organizer
+        kwargs["addon"] = self.addon
+        return kwargs
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["addon"] = self.addon
+        from .capabilities import get_capability
+
+        ctx["capability"] = get_capability(self.addon.capability)
+        return ctx
+
+    def form_valid(self, form):
+        form.save()
+        messages.success(
+            self.request,
+            _("Add-on '%(name)s' has been successfully added to your plan.")
+            % {"name": self.addon.name},
+        )
+        return redirect(
+            "plugins:eventyay_business:organizer.plan",
+            organizer=self.request.organizer.slug,
+        )
 
 
 class AddonDefinitionListView(AdministratorPermissionRequiredMixin, ListView):

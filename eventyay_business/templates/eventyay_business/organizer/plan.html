@@ -66,9 +66,9 @@
                                     <strong>{{ oa.quantity }}</strong>
                                 </td>
                                 <td>
-                                    <code>{{ oa.addon.capability }}</code>
+                                    <code>{{ oa.capability|default:oa.addon.capability }}</code>
                                     <br>
-                                    <small class="text-muted">{% trans "Allowance:" %} {{ oa.addon.entitlement_value }}</small>
+                                    <small class="text-muted">{% trans "Allowance:" %} {{ oa.entitlement_value|default:oa.addon.entitlement_value }}</small>
                                 </td>
                                 <td>
                                     {% if oa.ends_at %}
@@ -94,9 +94,9 @@
                                     <strong>{{ ea.quantity }}</strong>
                                 </td>
                                 <td>
-                                    <code>{{ ea.addon.capability }}</code>
+                                    <code>{{ ea.capability|default:ea.addon.capability }}</code>
                                     <br>
-                                    <small class="text-muted">{% trans "Allowance:" %} {{ ea.addon.entitlement_value }}</small>
+                                    <small class="text-muted">{% trans "Allowance:" %} {{ ea.entitlement_value|default:ea.addon.entitlement_value }}</small>
                                 </td>
                                 <td>
                                     {% if ea.ends_at %}
@@ -112,6 +112,89 @@
             </div>
         </div>
     {% endif %}
+
+    {# ── Available Add-ons Marketplace Section ── #}
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <h3 class="panel-title">
+                <i class="fa fa-fw fa-shopping-cart"></i>
+                {% trans "Available Add-ons & Extensions" %}
+            </h3>
+        </div>
+        <div class="panel-body">
+            <p class="text-muted" style="margin: 0;">
+                {% trans "Enhance your organisation or specific events with additional capabilities, integrations, and extra capacity." %}
+            </p>
+        </div>
+        {% if available_addons %}
+            <div class="table-responsive">
+                <table class="table table-hover table-striped" style="margin: 0;">
+                    <thead>
+                        <tr>
+                            <th>{% trans "Add-on" %}</th>
+                            <th>{% trans "Scope" %}</th>
+                            <th>{% trans "Feature / Allowance" %}</th>
+                            <th>{% trans "Price" %}</th>
+                            <th class="text-right">{% trans "Action" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for addon in available_addons %}
+                            <tr>
+                                <td>
+                                    <strong>{{ addon.name }}</strong>
+                                    {% if addon.description %}
+                                        <div class="help-block text-muted" style="margin: 2px 0 0; font-size: 12px;">
+                                            {{ addon.description }}
+                                        </div>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if addon.assignment_scope == "organizer" %}
+                                        <span class="label label-primary">{% trans "Organisation" %}</span>
+                                    {% else %}
+                                        <span class="label label-info">{% trans "Event" %}</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <code>{{ addon.capability }}</code>
+                                    <br>
+                                    <small class="text-muted">
+                                        {% trans "Grants:" %} {{ addon.entitlement_value }}
+                                        {% if addon.quantity > 1 %}(x{{ addon.quantity }}){% endif %}
+                                    </small>
+                                </td>
+                                <td>
+                                    {% if addon.price %}
+                                        <strong>{{ addon.price }} {{ addon.currency }}</strong>
+                                        <br>
+                                        <small class="text-muted">{{ addon.get_pricing_mode_display }}</small>
+                                    {% else %}
+                                        <span class="label label-success">{% trans "Free" %}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-right">
+                                    {% if addon.assignment_scope == "organizer" and addon.is_active_for_organizer and addon.entitlement_value == "true" %}
+                                        <button class="btn btn-default btn-sm" disabled>
+                                            <i class="fa fa-check text-success"></i> {% trans "Active" %}
+                                        </button>
+                                    {% else %}
+                                        <a href="{% url 'plugins:eventyay_business:organizer.addon.purchase' organizer=request.organizer.slug pk=addon.pk %}" class="btn btn-primary btn-sm">
+                                            <i class="fa fa-plus"></i> {% trans "Add to Plan" %}
+                                        </a>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="panel-body text-muted">
+                {% trans "There are currently no additional add-ons available for self-service purchase." %}
+            </div>
+        {% endif %}
+    </div>
 
     <style>
         /* Explicitly disable any browser or framework animations on the expandable sections */

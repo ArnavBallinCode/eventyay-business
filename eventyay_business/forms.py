@@ -345,3 +345,128 @@ class EventAddonForm(forms.ModelForm):
         if self.instance and self.instance.pk and self.instance.addon_id:
             qs = qs | AddonDefinition.objects.filter(pk=self.instance.addon_id)
         self.fields["addon"].queryset = qs.distinct()
+
+
+class OrganizerAddonPurchaseForm(forms.Form):
+    quantity = forms.IntegerField(
+        min_value=1,
+        initial=1,
+        label=_("Quantity"),
+        help_text=_("Number of units to activate."),
+    )
+    event = forms.ModelChoiceField(
+        queryset=None,
+        required=False,
+        label=_("Target Event"),
+        help_text=_("Select which event this add-on applies to."),
+    )
+
+    def __init__(self, *args, organizer=None, addon=None, **kwargs):
+        self.organizer = organizer
+        self.addon = addon
+        super().__init__(*args, **kwargs)
+
+        if self.addon:
+            if self.addon.quantity:
+                self.fields["quantity"].initial = self.addon.quantity
+
+            from .capabilities import CapabilityValueType, get_capability
+            from .models import AddonAssignmentScope
+
+            cap = get_capability(self.addon.capability)
+            if cap and cap.value_type == CapabilityValueType.BOOLEAN:
+                self.fields["quantity"].initial = 1
+                self.fields["quantity"].widget = forms.HiddenInput()
+
+            if self.addon.assignment_scope == AddonAssignmentScope.EVENT:
+                self.fields["event"].required = True
+                if self.organizer:
+                    self.fields["event"].queryset = (
+                        self.organizer.events.all().order_by("name")
+                    )
+                else:
+                    from eventyay.base.models import Event
+
+                    self.fields["event"].queryset = Event.objects.none()
+            else:
+                self.fields["event"].widget = forms.HiddenInput()
+                self.fields["event"].required = False
+
+    def clean(self):
+        cleaned_data = super().clean()
+        from .capabilities import CapabilityValueType, get_capability
+        from .models import (
+            AddonAssignmentScope,
+            AddonStatus,
+            EventAddon,
+            OrganizerAddon,
+        )
+
+        if not self.addon or not self.addon.active or not self.addon.public:
+            raise forms.ValidationError(
+                _("This add-on is currently unavailable for purchase.")
+            )
+
+        cap = get_capability(self.addon.capability)
+
+        if self.addon.assignment_scope == AddonAssignmentScope.EVENT:
+            event = cleaned_data.get("event")
+            if not event:
+                raise forms.ValidationError(
+                    _("Please select an event for this add-on.")
+                )
+            if self.organizer and event.organizer_id != self.organizer.id:
+                raise forms.ValidationError(_("Invalid event selected."))
+
+            # Prevent duplicate active boolean add-on for the same event
+            if cap and cap.value_type == CapabilityValueType.BOOLEAN:
+                if EventAddon.objects.filter(
+                    event=event, addon=self.addon, status=AddonStatus.ACTIVE
+                ).exists():
+                    raise forms.ValidationError(
+                        _("This add-on is already active for %(event)s.")
+                        % {"event": event.name}
+                    )
+        else:
+            if cap and cap.value_type == CapabilityValueType.BOOLEAN:
+                if OrganizerAddon.objects.filter(
+                    organizer=self.organizer,
+                    addon=self.addon,
+                    status=AddonStatus.ACTIVE,
+                ).exists():
+                    raise forms.ValidationError(
+                        _("This add-on is already active for your organisation.")
+                    )
+
+        return cleaned_data
+
+    def save(self):
+        from django.utils.timezone import now
+
+        from .models import (
+            AddonAssignmentScope,
+            AddonStatus,
+            EventAddon,
+            OrganizerAddon,
+        )
+
+        qty = self.cleaned_data.get("quantity") or 1
+
+        if self.addon.assignment_scope == AddonAssignmentScope.EVENT:
+            event = self.cleaned_data["event"]
+            assignment = EventAddon.objects.create(
+                event=event,
+                addon=self.addon,
+                quantity=qty,
+                status=AddonStatus.ACTIVE,
+                starts_at=now(),
+            )
+        else:
+            assignment = OrganizerAddon.objects.create(
+                organizer=self.organizer,
+                addon=self.addon,
+                quantity=qty,
+                status=AddonStatus.ACTIVE,
+                starts_at=now(),
+            )
+        return assignment

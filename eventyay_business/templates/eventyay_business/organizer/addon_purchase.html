@@ -1,0 +1,65 @@
+{% extends "pretixcontrol/organizers/base.html" %}
+{% load i18n %}
+{% load bootstrap3 %}
+
+{% block title %}{% trans "Purchase Add-on" %} - {{ addon.name }}{% endblock %}
+
+{% block inner %}
+    <h1>{% trans "Add to Plan" %}: {{ addon.name }}</h1>
+
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <h3 class="panel-title">
+                <i class="fa fa-fw fa-puzzle-piece"></i>
+                {% trans "Add-on Details" %}
+            </h3>
+        </div>
+        <div class="panel-body">
+            {% if addon.description %}
+                <p>{{ addon.description }}</p>
+            {% endif %}
+            <div class="row">
+                <div class="col-sm-6">
+                    <p>
+                        <strong>{% trans "Capability / Feature:" %}</strong> <code>{{ addon.capability }}</code><br>
+                        {% if capability %}
+                            <strong>{% trans "Feature Name:" %}</strong> {{ capability.label }}<br>
+                        {% endif %}
+                        <strong>{% trans "Allowance per unit:" %}</strong> {{ addon.entitlement_value }}
+                        {% if capability.unit %} {{ capability.unit }}{% endif %}
+                    </p>
+                </div>
+                <div class="col-sm-6">
+                    <p>
+                        <strong>{% trans "Scope:" %}</strong>
+                        {% if addon.assignment_scope == "organizer" %}
+                            <span class="label label-primary">{% trans "Organisation" %}</span>
+                        {% else %}
+                            <span class="label label-info">{% trans "Event" %}</span>
+                        {% endif %}<br>
+                        <strong>{% trans "Price:" %}</strong>
+                        {% if addon.price %}
+                            <strong>{{ addon.price }} {{ addon.currency }}</strong> ({{ addon.get_pricing_mode_display }})
+                        {% else %}
+                            <span class="label label-success">{% trans "Free" %}</span>
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <form method="post" class="form-horizontal">
+        {% csrf_token %}
+        {% bootstrap_form form layout='horizontal' %}
+
+        <div class="form-group submit-group">
+            <button type="submit" class="btn btn-primary btn-save">
+                <i class="fa fa-check"></i> {% trans "Confirm & Add to Plan" %}
+            </button>
+            <a href="{% url 'plugins:eventyay_business:organizer.plan' organizer=request.organizer.slug %}" class="btn btn-default">
+                {% trans "Cancel" %}
+            </a>
+        </div>
+    </form>
+{% endblock %}
