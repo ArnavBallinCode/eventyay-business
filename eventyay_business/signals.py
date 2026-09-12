@@ -1,11 +1,14 @@
 import logging
 from django.db import IntegrityError
 from django.db.models import Sum
-from django.dispatch import receiver
+from django.dispatch import Signal, receiver
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 
 logger = logging.getLogger(__name__)
+
+addon_canceled = Signal()
+addon_expired = Signal()
 
 try:
     from eventyay.control.signals import (
@@ -217,6 +220,7 @@ if entitlement_check and EntitlementDecision:
                 | Q(capability="", addon__capability=capability)
             )
             .exclude(ends_at__lt=current_time)
+            .exclude(cancel_at__lte=current_time)
             .select_related("addon")
         )
 
@@ -234,6 +238,7 @@ if entitlement_check and EntitlementDecision:
                     | Q(capability="", addon__capability=capability)
                 )
                 .exclude(ends_at__lt=current_time)
+                .exclude(cancel_at__lte=current_time)
                 .select_related("addon")
             )
 

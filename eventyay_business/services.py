@@ -157,3 +157,56 @@ def migrate_addon_assignments(addon_definition):
     )
 
     return org_count + event_count
+
+
+def invalidate_entitlement_cache(organizer=None, event=None):
+    """
+    Invalidates any cached entitlement decisions for an organizer and/or event.
+    """
+    try:
+        from django.core.cache import cache
+
+        keys = []
+        if organizer:
+            org_id = getattr(organizer, "pk", organizer)
+            keys.extend(
+                [
+                    f"entitlements:org:{org_id}",
+                    f"business:entitlements:org:{org_id}",
+                ]
+            )
+        if event:
+            event_id = getattr(event, "pk", event)
+            keys.extend(
+                [
+                    f"entitlements:event:{event_id}",
+                    f"business:entitlements:event:{event_id}",
+                ]
+            )
+        if keys:
+            cache.delete_many(keys)
+    except Exception:
+        logger.debug("Failed to invalidate entitlement cache", exc_info=True)
+
+
+def log_addon_lifecycle_action(instance, action: str, user=None, data=None):
+    """
+    Records an audit log entry on the target Organizer or Event for an add-on lifecycle change.
+    """
+    payload = data or {}
+    payload.setdefault("addon_id", instance.addon_id)
+    payload.setdefault("addon_name", instance.addon.name if instance.addon else "")
+    payload.setdefault("status", instance.status)
+
+    target = getattr(instance, "event", None) or getattr(instance, "organizer", None)
+    if target and hasattr(target, "log_action"):
+        try:
+            target.log_action(
+                f"eventyay_business.addon.{action}",
+                user=user,
+                data=payload,
+            )
+        except Exception:
+            logger.debug(
+                "Failed to create LogEntry for %s on %s", action, target, exc_info=True
+            )

@@ -421,6 +421,10 @@ class OrganizerAddon(models.Model):
     )
     starts_at = models.DateTimeField(default=now, verbose_name=_("Starts at"))
     ends_at = models.DateTimeField(null=True, blank=True, verbose_name=_("Ends at"))
+    cancel_at = models.DateTimeField(null=True, blank=True, verbose_name=_("Cancel at"))
+    canceled_at = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("Canceled at")
+    )
     status = models.CharField(
         max_length=20,
         choices=AddonStatus.choices,
@@ -450,6 +454,19 @@ class OrganizerAddon(models.Model):
                 self.currency = self.addon.currency
         super().save(*args, **kwargs)
 
+    def cancel(self, immediate: bool = False, cancel_at=None):
+        current = now()
+        self.canceled_at = current
+        if immediate or not (self.ends_at or cancel_at):
+            self.status = AddonStatus.CANCELED
+            self.cancel_at = current
+        else:
+            effective_cancel = cancel_at or self.ends_at
+            if effective_cancel <= current:
+                self.status = AddonStatus.CANCELED
+            self.cancel_at = effective_cancel
+        self.save(update_fields=["status", "cancel_at", "canceled_at", "updated_at"])
+
     @property
     def is_active(self):
         current = now()
@@ -458,6 +475,8 @@ class OrganizerAddon(models.Model):
         if self.starts_at and self.starts_at > current:
             return False
         if self.ends_at and self.ends_at < current:
+            return False
+        if self.cancel_at and self.cancel_at <= current:
             return False
         return True
 
@@ -524,6 +543,10 @@ class EventAddon(models.Model):
     )
     starts_at = models.DateTimeField(default=now, verbose_name=_("Starts at"))
     ends_at = models.DateTimeField(null=True, blank=True, verbose_name=_("Ends at"))
+    cancel_at = models.DateTimeField(null=True, blank=True, verbose_name=_("Cancel at"))
+    canceled_at = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("Canceled at")
+    )
     status = models.CharField(
         max_length=20,
         choices=AddonStatus.choices,
@@ -553,6 +576,19 @@ class EventAddon(models.Model):
                 self.currency = self.addon.currency
         super().save(*args, **kwargs)
 
+    def cancel(self, immediate: bool = False, cancel_at=None):
+        current = now()
+        self.canceled_at = current
+        if immediate or not (self.ends_at or cancel_at):
+            self.status = AddonStatus.CANCELED
+            self.cancel_at = current
+        else:
+            effective_cancel = cancel_at or self.ends_at
+            if effective_cancel <= current:
+                self.status = AddonStatus.CANCELED
+            self.cancel_at = effective_cancel
+        self.save(update_fields=["status", "cancel_at", "canceled_at", "updated_at"])
+
     @property
     def is_active(self):
         current = now()
@@ -561,6 +597,8 @@ class EventAddon(models.Model):
         if self.starts_at and self.starts_at > current:
             return False
         if self.ends_at and self.ends_at < current:
+            return False
+        if self.cancel_at and self.cancel_at <= current:
             return False
         return True
 

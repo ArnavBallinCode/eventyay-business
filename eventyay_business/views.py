@@ -47,7 +47,13 @@ from .models import (
     TierStatus,
     TierVersion,
 )
-from .services import migrate_addon_assignments, migrate_tier_subscribers
+from .services import (
+    invalidate_entitlement_cache,
+    log_addon_lifecycle_action,
+    migrate_addon_assignments,
+    migrate_tier_subscribers,
+)
+from .signals import addon_canceled
 
 
 class TierListView(AdministratorPermissionRequiredMixin, ListView):
@@ -388,6 +394,7 @@ class OrganizerPlanView(
                 starts_at__lte=current_time,
             )
             .exclude(ends_at__lt=current_time)
+            .exclude(cancel_at__lte=current_time)
             .select_related("addon")
             .order_by("addon__name")
         )
@@ -400,6 +407,7 @@ class OrganizerPlanView(
                 starts_at__lte=current_time,
             )
             .exclude(ends_at__lt=current_time)
+            .exclude(cancel_at__lte=current_time)
             .select_related("addon", "event")
             .order_by("event__name", "addon__name")
         )
@@ -416,7 +424,9 @@ class OrganizerPlanView(
                 organizer=organizer,
                 status=AddonStatus.ACTIVE,
                 starts_at__lte=current_time,
-            ).exclude(ends_at__lt=current_time)
+            )
+            .exclude(ends_at__lt=current_time)
+            .exclude(cancel_at__lte=current_time)
         )
         active_by_addon_id = {
             oa.addon_id: oa for oa in active_org_addons if oa.addon_id
@@ -519,6 +529,71 @@ class OrganizerAddonPurchaseView(
         )
 
 
+class OrganizerAddonCancelView(OrganizerPermissionRequiredMixin, TemplateView):
+    permission = "can_change_organizer_settings"
+    template_name = "eventyay_business/organizer/addon_cancel.html"
+
+    def dispatch(self, request, *args, **kwargs):
+        self.addon_assignment = get_object_or_404(
+            OrganizerAddon.objects.select_related("addon"),
+            pk=self.kwargs["pk"],
+            organizer=self.request.organizer,
+        )
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["assignment"] = self.addon_assignment
+        ctx["organizer"] = self.request.organizer
+        return ctx
+
+    def post(self, request, *args, **kwargs):
+        immediate = (
+            request.POST.get("immediate") == "1" or not self.addon_assignment.ends_at
+        )
+        with transaction.atomic():
+            assignment = OrganizerAddon.objects.select_for_update().get(
+                pk=self.addon_assignment.pk
+            )
+            if assignment.status != AddonStatus.ACTIVE:
+                messages.info(request, _("This add-on is already not active."))
+                return redirect(
+                    "plugins:eventyay_business:organizer.plan",
+                    organizer=self.request.organizer.slug,
+                )
+
+            assignment.cancel(immediate=immediate)
+            log_addon_lifecycle_action(
+                assignment,
+                "canceled",
+                user=request.user,
+                data={"immediate": immediate},
+            )
+            invalidate_entitlement_cache(organizer=self.request.organizer)
+            addon_canceled.send(
+                sender=OrganizerAddon, instance=assignment, immediate=immediate
+            )
+
+        if immediate or assignment.status == AddonStatus.CANCELED:
+            messages.success(
+                request,
+                _("Add-on '%(name)s' has been canceled.")
+                % {"name": assignment.addon.name},
+            )
+        else:
+            messages.success(
+                request,
+                _(
+                    "Add-on '%(name)s' is scheduled to cancel at the end of the billing period."
+                )
+                % {"name": assignment.addon.name},
+            )
+        return redirect(
+            "plugins:eventyay_business:organizer.plan",
+            organizer=self.request.organizer.slug,
+        )
+
+
 class EventDashboardAddonsView(EventPermissionRequiredMixin, TemplateView):
     permission = "can_change_event_settings"
     template_name = "eventyay_business/event/addons.html"
@@ -535,6 +610,7 @@ class EventDashboardAddonsView(EventPermissionRequiredMixin, TemplateView):
                 starts_at__lte=current_time,
             )
             .exclude(ends_at__lt=current_time)
+            .exclude(cancel_at__lte=current_time)
             .order_by("-starts_at", "addon__name")
         )
         ctx["active_addons"] = active_addons
@@ -626,6 +702,76 @@ class EventDashboardAddonPurchaseView(EventPermissionRequiredMixin, FormView):
             _("Add-on '%(name)s' has been successfully activated for %(event)s.")
             % {"name": self.addon.name, "event": self.request.event.name},
         )
+        return redirect(
+            "plugins:eventyay_business:event.addons",
+            organizer=self.request.organizer.slug,
+            event=self.request.event.slug,
+        )
+
+
+class EventAddonCancelView(EventPermissionRequiredMixin, TemplateView):
+    permission = "can_change_event_settings"
+    template_name = "eventyay_business/event/addon_cancel.html"
+
+    def dispatch(self, request, *args, **kwargs):
+        self.addon_assignment = get_object_or_404(
+            EventAddon.objects.select_related("addon"),
+            pk=self.kwargs["pk"],
+            event=self.request.event,
+        )
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["assignment"] = self.addon_assignment
+        ctx["event"] = self.request.event
+        return ctx
+
+    def post(self, request, *args, **kwargs):
+        immediate = (
+            request.POST.get("immediate") == "1" or not self.addon_assignment.ends_at
+        )
+        with transaction.atomic():
+            assignment = EventAddon.objects.select_for_update().get(
+                pk=self.addon_assignment.pk
+            )
+            if assignment.status != AddonStatus.ACTIVE:
+                messages.info(request, _("This add-on is already not active."))
+                return redirect(
+                    "plugins:eventyay_business:event.addons",
+                    organizer=self.request.organizer.slug,
+                    event=self.request.event.slug,
+                )
+
+            assignment.cancel(immediate=immediate)
+            log_addon_lifecycle_action(
+                assignment,
+                "canceled",
+                user=request.user,
+                data={"immediate": immediate},
+            )
+            invalidate_entitlement_cache(
+                organizer=self.request.organizer, event=self.request.event
+            )
+            addon_canceled.send(
+                sender=EventAddon, instance=assignment, immediate=immediate
+            )
+
+        if immediate or assignment.status == AddonStatus.CANCELED:
+            messages.success(
+                request,
+                _("Add-on '%(name)s' has been canceled for %(event)s.")
+                % {
+                    "name": assignment.addon.name,
+                    "event": self.request.event.name,
+                },
+            )
+        else:
+            messages.success(
+                request,
+                _("Add-on '%(name)s' is scheduled to cancel at the end of the period.")
+                % {"name": assignment.addon.name},
+            )
         return redirect(
             "plugins:eventyay_business:event.addons",
             organizer=self.request.organizer.slug,
@@ -768,4 +914,50 @@ class EventAddonUpdateView(AdministratorPermissionRequiredMixin, UpdateView):
     def form_valid(self, form):
         self.object = form.save()
         messages.success(self.request, _("Event add-on assignment updated."))
+        return redirect("plugins:eventyay_business:addons.assignments.event.list")
+
+
+class OrganizerAddonAdminRevokeView(AdministratorPermissionRequiredMixin, View):
+    def post(self, request, *args, **kwargs):
+        with transaction.atomic():
+            assignment = get_object_or_404(
+                OrganizerAddon.objects.select_for_update().select_related(
+                    "addon", "organizer"
+                ),
+                pk=self.kwargs["pk"],
+            )
+            assignment.cancel(immediate=True)
+            log_addon_lifecycle_action(
+                assignment, "revoked_by_admin", user=request.user
+            )
+            invalidate_entitlement_cache(organizer=assignment.organizer)
+            addon_canceled.send(
+                sender=OrganizerAddon, instance=assignment, immediate=True
+            )
+
+        messages.success(
+            request, _("The organizer add-on assignment has been revoked.")
+        )
+        return redirect("plugins:eventyay_business:addons.assignments.organizer.list")
+
+
+class EventAddonAdminRevokeView(AdministratorPermissionRequiredMixin, View):
+    def post(self, request, *args, **kwargs):
+        with transaction.atomic():
+            assignment = get_object_or_404(
+                EventAddon.objects.select_for_update().select_related(
+                    "addon", "event", "event__organizer"
+                ),
+                pk=self.kwargs["pk"],
+            )
+            assignment.cancel(immediate=True)
+            log_addon_lifecycle_action(
+                assignment, "revoked_by_admin", user=request.user
+            )
+            invalidate_entitlement_cache(
+                organizer=assignment.event.organizer, event=assignment.event
+            )
+            addon_canceled.send(sender=EventAddon, instance=assignment, immediate=True)
+
+        messages.success(request, _("The event add-on assignment has been revoked."))
         return redirect("plugins:eventyay_business:addons.assignments.event.list")
