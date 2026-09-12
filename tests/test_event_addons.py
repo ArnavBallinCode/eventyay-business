@@ -5,6 +5,7 @@ from django.urls import reverse
 from django.utils.timezone import now
 from eventyay.base.models import Event, Organizer, Team, User
 from eventyay.base.models.auth import StaffSession
+from unittest.mock import patch
 
 from eventyay_business.models import (
     AddonAssignmentScope,
@@ -226,7 +227,10 @@ def test_event_addon_purchase_get_and_post(business_admin_client, event_setup):
     assert "Summit 1" in content
 
     # POST purchase
-    resp_post = business_admin_client.post(purchase_url, {"quantity": 3}, follow=True)
+    with patch("eventyay_business.views.is_stripe_configured", return_value=False):
+        resp_post = business_admin_client.post(
+            purchase_url, {"quantity": 3}, follow=True
+        )
     assert resp_post.status_code == 200
 
     assignment = EventAddon.objects.get(event=event1, addon=addon)

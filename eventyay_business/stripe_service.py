@@ -123,14 +123,16 @@ def sync_tier_price_to_stripe(tier_price: TierPrice) -> Optional[str]:
     product_id = getattr(tier, "stripe_product_id", None)
     if not product_id:
         try:
-            prod = stripe.Product.create(
-                name=f"{tier.name} (v{tier_version.version})",
-                description=tier.description or "",
-                metadata={
+            prod_kwargs = {
+                "name": f"{tier.name} (v{tier_version.version})",
+                "metadata": {
                     "tier_slug": tier.slug,
                     "tier_version": str(tier_version.version),
                 },
-            )
+            }
+            if tier.description:
+                prod_kwargs["description"] = tier.description
+            prod = stripe.Product.create(**prod_kwargs)
             product_id = prod.id
             if hasattr(tier, "stripe_product_id"):
                 tier.stripe_product_id = product_id
@@ -200,15 +202,17 @@ def sync_addon_to_stripe(addon: AddonDefinition) -> Optional[str]:
     product_id = getattr(addon, "stripe_product_id", None)
     if not product_id:
         try:
-            prod = stripe.Product.create(
-                name=addon.name,
-                description=addon.description or "",
-                metadata={
+            prod_kwargs = {
+                "name": addon.name,
+                "metadata": {
                     "addon_slug": addon.slug,
                     "capability": addon.capability,
                     "assignment_scope": addon.assignment_scope,
                 },
-            )
+            }
+            if addon.description:
+                prod_kwargs["description"] = addon.description
+            prod = stripe.Product.create(**prod_kwargs)
             product_id = prod.id
             addon.stripe_product_id = product_id
             addon.save(update_fields=["stripe_product_id", "updated_at"])

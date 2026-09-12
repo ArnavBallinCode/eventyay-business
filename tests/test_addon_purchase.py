@@ -5,6 +5,7 @@ from django.urls import reverse
 from django.utils.timezone import now
 from eventyay.base.models import Event, Organizer
 from eventyay.base.models.auth import StaffSession
+from unittest.mock import patch
 
 from eventyay_business.models import (
     AddonAssignmentScope,
@@ -122,7 +123,10 @@ def test_purchase_organizer_scoped_addon(business_admin_client, organizer_setup)
     assert "Jitsi Room Booster" in resp_get.content.decode()
 
     # POST purchases
-    resp_post = business_admin_client.post(purchase_url, {"quantity": 10}, follow=True)
+    with patch("eventyay_business.views.is_stripe_configured", return_value=False):
+        resp_post = business_admin_client.post(
+            purchase_url, {"quantity": 10}, follow=True
+        )
     assert resp_post.status_code == 200
 
     assignment = OrganizerAddon.objects.get(organizer=organizer, addon=addon)
@@ -179,9 +183,10 @@ def test_purchase_event_scoped_addon(business_admin_client, organizer_setup):
     assert "Select a valid choice" in resp_inactive.content.decode()
 
     # Valid event succeeds
-    resp_post = business_admin_client.post(
-        purchase_url, {"quantity": 1, "event": event.pk}, follow=True
-    )
+    with patch("eventyay_business.views.is_stripe_configured", return_value=False):
+        resp_post = business_admin_client.post(
+            purchase_url, {"quantity": 1, "event": event.pk}, follow=True
+        )
     assert resp_post.status_code == 200
 
     assignment = EventAddon.objects.get(event=event, addon=addon)
