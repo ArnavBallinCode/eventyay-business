@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import views, views_stripe
 
 urlpatterns = [
     # Global Admin URLs
@@ -149,5 +149,31 @@ urlpatterns = [
         "control/event/<str:organizer>/<str:event>/business/addons/<int:pk>/cancel/",
         views.EventAddonCancelView.as_view(),
         name="event.addon.cancel",
+    ),
+    # Stripe Webhook and Checkout URLs
+    path(
+        "control/business/stripe/webhook/",
+        views_stripe.stripe_business_webhook_view,
+        name="stripe.webhook",
+    ),
+    path(
+        "control/organizer/<str:organizer>/business/checkout/success/",
+        views_stripe.StripeCheckoutSuccessView.as_view(),
+        name="checkout.success",
+    ),
+    path(
+        "control/organizer/<str:organizer>/business/checkout/cancel/",
+        views_stripe.StripeCheckoutCancelView.as_view(),
+        name="checkout.cancel",
+    ),
+    path(
+        "control/event/<str:organizer>/<str:event>/business/checkout/success/",
+        views_stripe.StripeCheckoutSuccessView.as_view(),
+        name="event.checkout.success",
+    ),
+    path(
+        "control/event/<str:organizer>/<str:event>/business/checkout/cancel/",
+        views_stripe.StripeCheckoutCancelView.as_view(),
+        name="event.checkout.cancel",
     ),
 ]

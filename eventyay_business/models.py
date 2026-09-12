@@ -309,6 +309,7 @@ class AddonPricingMode(models.TextChoices):
 
 
 class AddonStatus(models.TextChoices):
+    PENDING = "pending", _("Pending")
     ACTIVE = "active", _("Active")
     EXPIRED = "expired", _("Expired")
     CANCELED = "canceled", _("Canceled")
@@ -343,6 +344,12 @@ class AddonDefinition(models.Model):
     )
     active = models.BooleanField(default=True, verbose_name=_("Active"))
     public = models.BooleanField(default=True, verbose_name=_("Public"))
+    stripe_product_id = models.CharField(
+        max_length=255, blank=True, null=True, verbose_name=_("Stripe product ID")
+    )
+    stripe_price_id = models.CharField(
+        max_length=255, blank=True, null=True, verbose_name=_("Stripe price ID")
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Created at"))
     updated_at = models.DateTimeField(auto_now=True, verbose_name=_("Updated at"))
 
@@ -430,6 +437,15 @@ class OrganizerAddon(models.Model):
         choices=AddonStatus.choices,
         default=AddonStatus.ACTIVE,
         verbose_name=_("Status"),
+    )
+    stripe_subscription_id = models.CharField(
+        max_length=255, blank=True, null=True, verbose_name=_("Stripe subscription ID")
+    )
+    stripe_payment_intent_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        verbose_name=_("Stripe payment intent ID"),
     )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Created at"))
     updated_at = models.DateTimeField(auto_now=True, verbose_name=_("Updated at"))
@@ -555,6 +571,15 @@ class EventAddon(models.Model):
         choices=AddonStatus.choices,
         default=AddonStatus.ACTIVE,
         verbose_name=_("Status"),
+    )
+    stripe_subscription_id = models.CharField(
+        max_length=255, blank=True, null=True, verbose_name=_("Stripe subscription ID")
+    )
+    stripe_payment_intent_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        verbose_name=_("Stripe payment intent ID"),
     )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("Created at"))
     updated_at = models.DateTimeField(auto_now=True, verbose_name=_("Updated at"))

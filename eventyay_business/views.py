@@ -54,6 +54,10 @@ from .services import (
     migrate_tier_subscribers,
 )
 from .signals import addon_canceled
+from .stripe_service import (
+    create_addon_checkout_session,
+    is_stripe_configured,
+)
 
 
 class TierListView(AdministratorPermissionRequiredMixin, ListView):
@@ -516,6 +520,44 @@ class OrganizerAddonPurchaseView(
                             organizer=self.request.organizer.slug,
                         )
 
+            if self.addon.price and self.addon.price > 0 and is_stripe_configured():
+                assignment = form.save(commit=False, status=AddonStatus.PENDING)
+                assignment.status = AddonStatus.PENDING
+                assignment.save()
+
+                success_url = self.request.build_absolute_uri(
+                    reverse(
+                        "plugins:eventyay_business:checkout.success",
+                        kwargs={"organizer": self.request.organizer.slug},
+                    )
+                )
+                cancel_url = self.request.build_absolute_uri(
+                    reverse(
+                        "plugins:eventyay_business:checkout.cancel",
+                        kwargs={"organizer": self.request.organizer.slug},
+                    )
+                )
+                checkout_url = create_addon_checkout_session(
+                    organizer=self.request.organizer,
+                    addon=self.addon,
+                    user=self.request.user,
+                    quantity=form.cleaned_data.get("quantity", 1),
+                    event=form.cleaned_data.get("event"),
+                    success_url=success_url,
+                    cancel_url=cancel_url,
+                    assignment=assignment,
+                )
+                if checkout_url:
+                    return redirect(checkout_url)
+                messages.error(
+                    self.request,
+                    _("Could not initiate payment session. Please try again later."),
+                )
+                return redirect(
+                    "plugins:eventyay_business:organizer.plan",
+                    organizer=self.request.organizer.slug,
+                )
+
             form.save()
 
         messages.success(
@@ -708,6 +750,51 @@ class EventDashboardAddonPurchaseView(EventPermissionRequiredMixin, FormView):
                         organizer=self.request.organizer.slug,
                         event=self.request.event.slug,
                     )
+
+            if self.addon.price and self.addon.price > 0 and is_stripe_configured():
+                assignment = form.save(commit=False, status=AddonStatus.PENDING)
+                assignment.status = AddonStatus.PENDING
+                assignment.save()
+
+                success_url = self.request.build_absolute_uri(
+                    reverse(
+                        "plugins:eventyay_business:event.checkout.success",
+                        kwargs={
+                            "organizer": self.request.organizer.slug,
+                            "event": self.request.event.slug,
+                        },
+                    )
+                )
+                cancel_url = self.request.build_absolute_uri(
+                    reverse(
+                        "plugins:eventyay_business:event.checkout.cancel",
+                        kwargs={
+                            "organizer": self.request.organizer.slug,
+                            "event": self.request.event.slug,
+                        },
+                    )
+                )
+                checkout_url = create_addon_checkout_session(
+                    organizer=self.request.organizer,
+                    addon=self.addon,
+                    user=self.request.user,
+                    quantity=form.cleaned_data.get("quantity", 1),
+                    event=self.request.event,
+                    success_url=success_url,
+                    cancel_url=cancel_url,
+                    assignment=assignment,
+                )
+                if checkout_url:
+                    return redirect(checkout_url)
+                messages.error(
+                    self.request,
+                    _("Could not initiate payment session. Please try again later."),
+                )
+                return redirect(
+                    "plugins:eventyay_business:event.addons",
+                    organizer=self.request.organizer.slug,
+                    event=self.request.event.slug,
+                )
 
             form.save()
 

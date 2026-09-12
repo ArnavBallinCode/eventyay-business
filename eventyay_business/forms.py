@@ -452,7 +452,7 @@ class OrganizerAddonPurchaseForm(forms.Form):
 
         return cleaned_data
 
-    def save(self):
+    def save(self, commit=True, status=None):
         from django.utils.timezone import now
 
         from .models import (
@@ -462,25 +462,29 @@ class OrganizerAddonPurchaseForm(forms.Form):
             OrganizerAddon,
         )
 
+        if status is None:
+            status = AddonStatus.ACTIVE
         qty = self.cleaned_data.get("quantity") or 1
 
         if self.addon.assignment_scope == AddonAssignmentScope.EVENT:
             event = self.cleaned_data["event"]
-            assignment = EventAddon.objects.create(
+            assignment = EventAddon(
                 event=event,
                 addon=self.addon,
                 quantity=qty,
-                status=AddonStatus.ACTIVE,
+                status=status,
                 starts_at=now(),
             )
         else:
-            assignment = OrganizerAddon.objects.create(
+            assignment = OrganizerAddon(
                 organizer=self.organizer,
                 addon=self.addon,
                 quantity=qty,
-                status=AddonStatus.ACTIVE,
+                status=status,
                 starts_at=now(),
             )
+        if commit:
+            assignment.save()
         return assignment
 
 
@@ -541,16 +545,21 @@ class EventAddonPurchaseForm(forms.Form):
 
         return cleaned_data
 
-    def save(self):
+    def save(self, commit=True, status=None):
         from django.utils.timezone import now
 
         from .models import AddonStatus, EventAddon
 
+        if status is None:
+            status = AddonStatus.ACTIVE
         qty = self.cleaned_data.get("quantity") or 1
-        return EventAddon.objects.create(
+        assignment = EventAddon(
             event=self.event,
             addon=self.addon,
             quantity=qty,
-            status=AddonStatus.ACTIVE,
+            status=status,
             starts_at=now(),
         )
+        if commit:
+            assignment.save()
+        return assignment
