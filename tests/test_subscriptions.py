@@ -1,4 +1,5 @@
 import pytest
+from django.test import override_settings
 from eventyay.base.models import Organizer
 
 from eventyay_business.models import Subscription
@@ -92,3 +93,85 @@ def test_subscription_edit_view_post(business_admin_client):
     assert post_response.status_code == 200
     sub.refresh_from_db()
     assert sub.currency == "EUR"
+
+
+@pytest.mark.django_db
+@override_settings(SITE_URL="https://testserver")
+def test_organizer_plan_view_shows_active_addons(business_admin_client):
+    from django.urls import reverse
+    from django.utils.timezone import now
+    from eventyay.base.models import Event
+
+    from eventyay_business.models import (
+        AddonAssignmentScope,
+        AddonDefinition,
+        AddonStatus,
+        EventAddon,
+        OrganizerAddon,
+    )
+
+    org = Organizer.objects.create(name="Plan View Org", slug="plan-view-org")
+    event = Event.objects.create(
+        organizer=org, name="Plan View Event", slug="plan-view-event", date_from=now()
+    )
+
+    # 1. Active Organizer Add-on
+    org_addon_def = AddonDefinition.objects.create(
+        name="Extra Admin Pack",
+        slug="extra-admin-pack",
+        capability="organizer.full_admins",
+        entitlement_value="3",
+        assignment_scope=AddonAssignmentScope.ORGANIZER,
+    )
+    OrganizerAddon.objects.create(
+        organizer=org,
+        addon=org_addon_def,
+        quantity=1,
+        status=AddonStatus.ACTIVE,
+    )
+
+    # 2. Active Event Add-on
+    event_addon_def = AddonDefinition.objects.create(
+        name="Live Interpretation Pack",
+        slug="live-interpretation-pack",
+        capability="video.interpretation",
+        entitlement_value="true",
+        assignment_scope=AddonAssignmentScope.EVENT,
+    )
+    EventAddon.objects.create(
+        event=event,
+        addon=event_addon_def,
+        quantity=2,
+        status=AddonStatus.ACTIVE,
+    )
+
+    # 3. Inactive/Expired Add-on (should not show)
+    inactive_addon_def = AddonDefinition.objects.create(
+        name="Expired Addon Pack",
+        slug="expired-addon-pack",
+        capability="video.loungemesh",
+        entitlement_value="true",
+        assignment_scope=AddonAssignmentScope.ORGANIZER,
+    )
+    OrganizerAddon.objects.create(
+        organizer=org,
+        addon=inactive_addon_def,
+        quantity=1,
+        status=AddonStatus.EXPIRED,
+    )
+
+    url = reverse(
+        "plugins:eventyay_business:organizer.plan", kwargs={"organizer": org.slug}
+    )
+    response = business_admin_client.get(url)
+    assert response.status_code == 200
+    content = response.content.decode()
+
+    # Active Add-ons section and items should be present
+    assert "Active Add-ons" in content
+    assert "Extra Admin Pack" in content
+    assert "Live Interpretation Pack" in content
+    assert "Plan View Event" in content
+
+    # Inactive add-on should not be displayed
+    assert "Expired Addon Pack" not in content

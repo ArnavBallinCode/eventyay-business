@@ -30,6 +30,9 @@ from .forms import (
 )
 from .models import (
     AddonDefinition,
+    AddonStatus,
+    EventAddon,
+    OrganizerAddon,
     Subscription,
     SubscriptionStatus,
     Tier,
@@ -368,6 +371,31 @@ class OrganizerPlanView(
         ctx["developer_entitlements"] = sorted(
             developer_entitlements, key=lambda x: x["capability"].category
         )
+
+        ctx["active_organizer_addons"] = (
+            OrganizerAddon.objects.filter(
+                organizer=organizer,
+                addon__active=True,
+                status=AddonStatus.ACTIVE,
+                starts_at__lte=current_time,
+            )
+            .exclude(ends_at__lt=current_time)
+            .select_related("addon")
+            .order_by("addon__name")
+        )
+
+        ctx["active_event_addons"] = (
+            EventAddon.objects.filter(
+                event__organizer=organizer,
+                addon__active=True,
+                status=AddonStatus.ACTIVE,
+                starts_at__lte=current_time,
+            )
+            .exclude(ends_at__lt=current_time)
+            .select_related("addon", "event")
+            .order_by("event__name", "addon__name")
+        )
+
         return ctx
 
 
