@@ -196,15 +196,20 @@ if entitlement_check and EntitlementDecision:
         if value is None:
             value = cap_def.default_value
 
+        from django.db.models import Q
+
         from .models import AddonStatus, EventAddon, OrganizerAddon
 
         active_org_addons = list(
             OrganizerAddon.objects.filter(
                 organizer=organizer,
-                addon__capability=capability,
                 addon__active=True,
                 status=AddonStatus.ACTIVE,
                 starts_at__lte=current_time,
+            )
+            .filter(
+                Q(capability=capability)
+                | Q(capability="", addon__capability=capability)
             )
             .exclude(ends_at__lt=current_time)
             .select_related("addon")
@@ -215,10 +220,13 @@ if entitlement_check and EntitlementDecision:
             active_event_addons = list(
                 EventAddon.objects.filter(
                     event=event,
-                    addon__capability=capability,
                     addon__active=True,
                     status=AddonStatus.ACTIVE,
                     starts_at__lte=current_time,
+                )
+                .filter(
+                    Q(capability=capability)
+                    | Q(capability="", addon__capability=capability)
                 )
                 .exclude(ends_at__lt=current_time)
                 .select_related("addon")
@@ -227,9 +235,7 @@ if entitlement_check and EntitlementDecision:
         all_active_addons = active_org_addons + active_event_addons
 
         if cap_def.value_type == CapabilityValueType.BOOLEAN:
-            addon_grants = any(
-                bool(a.addon.get_typed_value()) for a in all_active_addons
-            )
+            addon_grants = any(bool(a.get_typed_value()) for a in all_active_addons)
             if value or addon_grants:
                 return EntitlementDecision(allowed=True)
             else:
@@ -243,8 +249,8 @@ if entitlement_check and EntitlementDecision:
             addon_allowance = sum(
                 a.quantity
                 * int(
-                    a.addon.get_typed_value()
-                    if a.addon.get_typed_value() is not None
+                    a.get_typed_value()
+                    if a.get_typed_value() is not None
                     else (a.addon.quantity or 1)
                 )
                 for a in all_active_addons

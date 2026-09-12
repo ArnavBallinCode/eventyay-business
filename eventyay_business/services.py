@@ -124,3 +124,36 @@ def migrate_tier_subscribers(tier, target_version, from_version=None):
 
     count = qs.update(tier_version=target_version, updated_at=now())
     return count
+
+
+def migrate_addon_assignments(addon_definition):
+    """
+    Synchronizes all active assignments of an AddonDefinition to match its current
+    snapshot fields (capability, entitlement_value, price, currency).
+    Returns the total number of assignments updated.
+    """
+    from .models import AddonStatus, EventAddon, OrganizerAddon
+
+    org_count = OrganizerAddon.objects.filter(
+        addon=addon_definition,
+        status=AddonStatus.ACTIVE,
+    ).update(
+        capability=addon_definition.capability,
+        entitlement_value=addon_definition.entitlement_value,
+        price=addon_definition.price,
+        currency=addon_definition.currency,
+        updated_at=now(),
+    )
+
+    event_count = EventAddon.objects.filter(
+        addon=addon_definition,
+        status=AddonStatus.ACTIVE,
+    ).update(
+        capability=addon_definition.capability,
+        entitlement_value=addon_definition.entitlement_value,
+        price=addon_definition.price,
+        currency=addon_definition.currency,
+        updated_at=now(),
+    )
+
+    return org_count + event_count

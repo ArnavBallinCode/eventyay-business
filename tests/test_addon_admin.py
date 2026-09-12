@@ -310,3 +310,96 @@ def test_event_addon_assignment_views(business_admin_client):
     assert resp.status_code == 302
     assignment.refresh_from_db()
     assert assignment.quantity == 4
+
+
+@pytest.mark.django_db
+def test_addon_update_without_migration(business_admin_client):
+    from eventyay.base.models import Organizer
+
+    org = Organizer.objects.create(name="GF Admin Org", slug="gf-admin-org")
+    addon = AddonDefinition.objects.create(
+        name="Cap Booster",
+        slug="cap-booster",
+        capability="video.jitsi.concurrent_rooms",
+        entitlement_value="2",
+        price=Decimal("10.00"),
+        currency="USD",
+    )
+    oa = OrganizerAddon.objects.create(organizer=org, addon=addon, quantity=1)
+    assert oa.entitlement_value == "2"
+
+    url = reverse("plugins:eventyay_business:addons.edit", kwargs={"pk": addon.pk})
+    response = business_admin_client.post(
+        url,
+        {
+            "name": "Cap Booster Updated",
+            "slug": "cap-booster",
+            "assignment_scope": AddonAssignmentScope.ORGANIZER,
+            "pricing_mode": AddonPricingMode.RECURRING,
+            "currency": "USD",
+            "price": "20.00",
+            "capability": "video.jitsi.concurrent_rooms",
+            "entitlement_value": "4",
+            "quantity": "1",
+            "active": "on",
+            # update_existing_assignments is omitted (unchecked)
+        },
+    )
+    assert response.status_code == 302
+    addon.refresh_from_db()
+    assert addon.name == "Cap Booster Updated"
+    assert addon.price == Decimal("20.00")
+    assert addon.entitlement_value == "4"
+
+    # Existing assignment must be grandfathered with old snapshot
+    oa.refresh_from_db()
+    assert oa.entitlement_value == "2"
+    assert oa.price == Decimal("10.00")
+
+
+@pytest.mark.django_db
+def test_addon_update_with_migration_checkbox(business_admin_client):
+    from eventyay.base.models import Organizer
+
+    org = Organizer.objects.create(name="Migrate Admin Org", slug="mig-admin-org")
+    addon = AddonDefinition.objects.create(
+        name="Cap Booster 2",
+        slug="cap-booster-2",
+        capability="video.jitsi.concurrent_rooms",
+        entitlement_value="2",
+        price=Decimal("10.00"),
+        currency="USD",
+    )
+    oa = OrganizerAddon.objects.create(organizer=org, addon=addon, quantity=1)
+    assert oa.entitlement_value == "2"
+
+    url = reverse("plugins:eventyay_business:addons.edit", kwargs={"pk": addon.pk})
+    response = business_admin_client.post(
+        url,
+        {
+            "name": "Cap Booster 2 Updated",
+            "slug": "cap-booster-2",
+            "assignment_scope": AddonAssignmentScope.ORGANIZER,
+            "pricing_mode": AddonPricingMode.RECURRING,
+            "currency": "USD",
+            "price": "30.00",
+            "capability": "video.jitsi.concurrent_rooms",
+            "entitlement_value": "8",
+            "quantity": "1",
+            "active": "on",
+            "update_existing_assignments": "on",
+        },
+        follow=True,
+    )
+    assert response.status_code == 200
+    addon.refresh_from_db()
+    assert addon.price == Decimal("30.00")
+    assert addon.entitlement_value == "8"
+
+    # Existing assignment must be updated
+    oa.refresh_from_db()
+    assert oa.entitlement_value == "8"
+    assert oa.price == Decimal("30.00")
+
+    content = response.content.decode()
+    assert "1 existing active assignment(s) updated" in content

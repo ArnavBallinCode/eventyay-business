@@ -212,6 +212,28 @@ class AddonDefinitionForm(forms.ModelForm):
                 choices.append((self.instance.capability, self.instance.capability))
         self.fields["capability"].widget = forms.Select(choices=choices)
 
+        if self.instance and self.instance.pk:
+            from .models import AddonStatus, EventAddon, OrganizerAddon
+
+            active_org_count = OrganizerAddon.objects.filter(
+                addon=self.instance, status=AddonStatus.ACTIVE
+            ).count()
+            active_event_count = EventAddon.objects.filter(
+                addon=self.instance, status=AddonStatus.ACTIVE
+            ).count()
+            total_active = active_org_count + active_event_count
+
+            self.fields["update_existing_assignments"] = forms.BooleanField(
+                required=False,
+                label=_("Update all existing active assignments"),
+                help_text=_(
+                    "If checked, %(count)d active assignment(s) will be updated to match the new "
+                    "capability, allowance, and price immediately. If unchecked, existing assignments "
+                    "remain grandfathered."
+                )
+                % {"count": total_active},
+            )
+
     def clean(self):
         cleaned_data = super().clean()
         capability_name = cleaned_data.get("capability")
