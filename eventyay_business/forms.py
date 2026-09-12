@@ -419,7 +419,11 @@ class OrganizerAddonPurchaseForm(forms.Form):
                 raise forms.ValidationError(_("Invalid event selected."))
 
             # Prevent duplicate active boolean add-on for the same event
-            if cap and cap.value_type == CapabilityValueType.BOOLEAN:
+            is_boolean = (cap and cap.value_type == CapabilityValueType.BOOLEAN) or (
+                self.addon.entitlement_value
+                and str(self.addon.entitlement_value).lower() in ("true", "1")
+            )
+            if is_boolean:
                 if EventAddon.objects.filter(
                     event=event,
                     capability=self.addon.capability,
@@ -430,7 +434,11 @@ class OrganizerAddonPurchaseForm(forms.Form):
                         % {"event": event.name}
                     )
         else:
-            if cap and cap.value_type == CapabilityValueType.BOOLEAN:
+            is_boolean = (cap and cap.value_type == CapabilityValueType.BOOLEAN) or (
+                self.addon.entitlement_value
+                and str(self.addon.entitlement_value).lower() in ("true", "1")
+            )
+            if is_boolean:
                 if OrganizerAddon.objects.filter(
                     organizer=self.organizer,
                     capability=self.addon.capability,
@@ -474,3 +482,75 @@ class OrganizerAddonPurchaseForm(forms.Form):
                 starts_at=now(),
             )
         return assignment
+
+
+class EventAddonPurchaseForm(forms.Form):
+    quantity = forms.IntegerField(
+        min_value=1,
+        initial=1,
+        label=_("Quantity"),
+        widget=forms.NumberInput(attrs={"class": "form-control", "min": 1}),
+    )
+
+    def __init__(self, *args, event=None, addon=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.event = event
+        self.addon = addon
+
+        if self.addon:
+            if self.addon.quantity:
+                self.fields["quantity"].initial = self.addon.quantity
+
+            from .capabilities import CapabilityValueType, get_capability
+
+            cap = get_capability(self.addon.capability)
+            if cap and cap.value_type == CapabilityValueType.BOOLEAN:
+                self.fields["quantity"].initial = 1
+                self.fields["quantity"].widget = forms.HiddenInput()
+
+    def clean(self):
+        cleaned_data = super().clean()
+        from .capabilities import CapabilityValueType, get_capability
+        from .models import AddonAssignmentScope, AddonStatus, EventAddon
+
+        if (
+            not self.addon
+            or not self.addon.active
+            or not self.addon.public
+            or self.addon.assignment_scope != AddonAssignmentScope.EVENT
+        ):
+            raise forms.ValidationError(
+                _("This add-on is currently unavailable for this event.")
+            )
+
+        cap = get_capability(self.addon.capability)
+        is_boolean = (cap and cap.value_type == CapabilityValueType.BOOLEAN) or (
+            self.addon.entitlement_value
+            and str(self.addon.entitlement_value).lower() in ("true", "1")
+        )
+        if is_boolean:
+            if EventAddon.objects.filter(
+                event=self.event,
+                capability=self.addon.capability,
+                status=AddonStatus.ACTIVE,
+            ).exists():
+                raise forms.ValidationError(
+                    _("This add-on capability is already active for %(event)s.")
+                    % {"event": self.event.name}
+                )
+
+        return cleaned_data
+
+    def save(self):
+        from django.utils.timezone import now
+
+        from .models import AddonStatus, EventAddon
+
+        qty = self.cleaned_data.get("quantity") or 1
+        return EventAddon.objects.create(
+            event=self.event,
+            addon=self.addon,
+            quantity=qty,
+            status=AddonStatus.ACTIVE,
+            starts_at=now(),
+        )

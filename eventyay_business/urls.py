@@ -119,4 +119,15 @@ urlpatterns = [
         views.OrganizerAddonPurchaseView.as_view(),
         name="organizer.addon.purchase",
     ),
+    # Event Dashboard URLs
+    path(
+        "control/event/<str:organizer>/<str:event>/business/addons/",
+        views.EventDashboardAddonsView.as_view(),
+        name="event.addons",
+    ),
+    path(
+        "control/event/<str:organizer>/<str:event>/business/addons/<int:pk>/purchase/",
+        views.EventDashboardAddonPurchaseView.as_view(),
+        name="event.addon.purchase",
+    ),
 ]

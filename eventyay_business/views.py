@@ -16,6 +16,7 @@ from django.views.generic import (
 from eventyay.base.models import Event, Organizer
 from eventyay.control.permissions import (
     AdministratorPermissionRequiredMixin,
+    EventPermissionRequiredMixin,
     OrganizerPermissionRequiredMixin,
 )
 from eventyay.control.views.organizer_views.organizer_detail_view_mixin import (
@@ -26,6 +27,7 @@ from .capabilities import CapabilityValueType, get_all_capabilities, get_capabil
 from .forms import (
     AddonDefinitionForm,
     EventAddonForm,
+    EventAddonPurchaseForm,
     OrganizerAddonForm,
     OrganizerAddonPurchaseForm,
     SubscriptionAdminForm,
@@ -514,6 +516,120 @@ class OrganizerAddonPurchaseView(
         return redirect(
             "plugins:eventyay_business:organizer.plan",
             organizer=self.request.organizer.slug,
+        )
+
+
+class EventDashboardAddonsView(EventPermissionRequiredMixin, TemplateView):
+    permission = "can_change_event_settings"
+    template_name = "eventyay_business/event/addons.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        event = self.request.event
+        current_time = now()
+
+        active_addons = list(
+            EventAddon.objects.filter(
+                event=event,
+                status=AddonStatus.ACTIVE,
+                starts_at__lte=current_time,
+            )
+            .exclude(ends_at__lt=current_time)
+            .order_by("-starts_at", "addon__name")
+        )
+        ctx["active_addons"] = active_addons
+
+        available_addons = list(
+            AddonDefinition.objects.filter(
+                active=True,
+                public=True,
+                assignment_scope=AddonAssignmentScope.EVENT,
+            ).order_by("name")
+        )
+
+        active_by_addon_id = {ea.addon_id: ea for ea in active_addons if ea.addon_id}
+        active_by_capability = {
+            ea.capability: ea for ea in active_addons if ea.capability
+        }
+
+        for addon in available_addons:
+            active_assignment = active_by_addon_id.get(
+                addon.id
+            ) or active_by_capability.get(addon.capability)
+            addon.active_assignment = active_assignment
+            addon.is_active_for_event = active_assignment is not None
+
+        ctx["available_addons"] = available_addons
+        return ctx
+
+
+class EventDashboardAddonPurchaseView(EventPermissionRequiredMixin, FormView):
+    permission = "can_change_event_settings"
+    template_name = "eventyay_business/event/addon_purchase.html"
+    form_class = EventAddonPurchaseForm
+
+    def get_addon(self):
+        return get_object_or_404(
+            AddonDefinition,
+            pk=self.kwargs["pk"],
+            active=True,
+            public=True,
+            assignment_scope=AddonAssignmentScope.EVENT,
+        )
+
+    def dispatch(self, request, *args, **kwargs):
+        self.addon = self.get_addon()
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["event"] = self.request.event
+        kwargs["addon"] = self.addon
+        return kwargs
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["addon"] = self.addon
+        ctx["capability"] = get_capability(self.addon.capability)
+        return ctx
+
+    def form_valid(self, form):
+        cap = get_capability(self.addon.capability)
+        is_boolean = (cap and cap.value_type == CapabilityValueType.BOOLEAN) or (
+            self.addon.entitlement_value
+            and str(self.addon.entitlement_value).lower() in ("true", "1")
+        )
+
+        with transaction.atomic():
+            Event.objects.select_for_update().get(pk=self.request.event.pk)
+            if is_boolean:
+                if EventAddon.objects.filter(
+                    event=self.request.event,
+                    capability=self.addon.capability,
+                    status=AddonStatus.ACTIVE,
+                ).exists():
+                    messages.warning(
+                        self.request,
+                        _("This add-on is already active for %(event)s.")
+                        % {"event": self.request.event.name},
+                    )
+                    return redirect(
+                        "plugins:eventyay_business:event.addons",
+                        organizer=self.request.organizer.slug,
+                        event=self.request.event.slug,
+                    )
+
+            form.save()
+
+        messages.success(
+            self.request,
+            _("Add-on '%(name)s' has been successfully activated for %(event)s.")
+            % {"name": self.addon.name, "event": self.request.event.name},
+        )
+        return redirect(
+            "plugins:eventyay_business:event.addons",
+            organizer=self.request.organizer.slug,
+            event=self.request.event.slug,
         )
 
 

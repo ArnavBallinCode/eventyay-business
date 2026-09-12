@@ -2,7 +2,10 @@ from django.test import RequestFactory
 from django.urls import ResolverMatch
 from unittest.mock import Mock
 
-from eventyay_business.signals import business_tiers_nav
+from eventyay_business.signals import (
+    business_event_addons_nav,
+    business_tiers_nav,
+)
 
 
 def test_business_tiers_nav_anonymous():
@@ -139,3 +142,84 @@ def test_business_tiers_nav_staff_on_addons_list():
     assert items[0]["active"] is False
     assert items[1]["active"] is False
     assert items[2]["active"] is True
+
+
+def test_business_event_addons_nav_anonymous():
+    factory = RequestFactory()
+    request = factory.get("/control/event/test-org/test-event/settings/")
+    request.user = Mock(is_authenticated=False)
+    request.resolver_match = ResolverMatch(
+        func=lambda r: None,
+        args=(),
+        kwargs={"organizer": "test-org", "event": "test-event"},
+        url_name="event.settings",
+        app_names=["pretixcontrol"],
+        namespaces=["control"],
+    )
+    items = business_event_addons_nav(sender=None, request=request)
+    assert items == []
+
+
+def test_business_event_addons_nav_without_permission():
+    factory = RequestFactory()
+    request = factory.get("/control/event/test-org/test-event/settings/")
+    user = Mock(is_authenticated=True)
+    user.has_event_permission.return_value = False
+    request.user = user
+    request.organizer = Mock(slug="test-org")
+    request.event = Mock(slug="test-event")
+    request.resolver_match = ResolverMatch(
+        func=lambda r: None,
+        args=(),
+        kwargs={"organizer": "test-org", "event": "test-event"},
+        url_name="event.settings",
+        app_names=["pretixcontrol"],
+        namespaces=["control"],
+    )
+    items = business_event_addons_nav(sender=request.event, request=request)
+    assert items == []
+
+
+def test_business_event_addons_nav_with_permission():
+    factory = RequestFactory()
+    request = factory.get("/control/event/test-org/test-event/settings/")
+    user = Mock(is_authenticated=True)
+    user.has_event_permission.return_value = True
+    request.user = user
+    request.organizer = Mock(slug="test-org")
+    request.event = Mock(slug="test-event")
+    request.resolver_match = ResolverMatch(
+        func=lambda r: None,
+        args=(),
+        kwargs={"organizer": "test-org", "event": "test-event"},
+        url_name="event.settings",
+        app_names=["pretixcontrol"],
+        namespaces=["control"],
+    )
+    items = business_event_addons_nav(sender=request.event, request=request)
+    assert len(items) == 1
+    assert str(items[0]["label"]) == "Add-ons & Modules"
+    assert items[0]["active"] is False
+    assert "test-org" in items[0]["url"]
+    assert "test-event" in items[0]["url"]
+
+
+def test_business_event_addons_nav_active():
+    factory = RequestFactory()
+    request = factory.get("/control/event/test-org/test-event/business/addons/")
+    user = Mock(is_authenticated=True)
+    user.has_event_permission.return_value = True
+    request.user = user
+    request.organizer = Mock(slug="test-org")
+    request.event = Mock(slug="test-event")
+    request.resolver_match = ResolverMatch(
+        func=lambda r: None,
+        args=(),
+        kwargs={"organizer": "test-org", "event": "test-event"},
+        url_name="event.addons",
+        app_names=["plugins:eventyay_business"],
+        namespaces=["plugins:eventyay_business"],
+    )
+    items = business_event_addons_nav(sender=request.event, request=request)
+    assert len(items) == 1
+    assert items[0]["active"] is True
