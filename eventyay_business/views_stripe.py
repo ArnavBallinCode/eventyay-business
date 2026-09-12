@@ -72,7 +72,10 @@ class StripeCheckoutSuccessView(View):
         event = kwargs.get("event")
         messages.success(
             request,
-            _("Your payment was successful! Your add-on or plan is now active."),
+            _(
+                "Your payment was successful! Your subscription or add-on is being "
+                "activated and will appear shortly."
+            ),
         )
         if event:
             return redirect(
@@ -87,6 +90,30 @@ class StripeCheckoutCancelView(View):
     def get(self, request, *args, **kwargs):
         organizer = kwargs.get("organizer")
         event = kwargs.get("event")
+        assignment_id = request.GET.get("assignment_id")
+        scope = request.GET.get("scope")
+
+        if assignment_id:
+            from .models import AddonStatus, EventAddon, OrganizerAddon
+
+            try:
+                if scope == "event" or event:
+                    assignment = EventAddon.objects.filter(
+                        pk=assignment_id, status=AddonStatus.PENDING
+                    ).first()
+                else:
+                    assignment = OrganizerAddon.objects.filter(
+                        pk=assignment_id, status=AddonStatus.PENDING
+                    ).first()
+                if assignment:
+                    assignment.delete()
+            except Exception as exc:
+                logger.warning(
+                    "Failed to clean up canceled assignment %s: %s",
+                    assignment_id,
+                    exc,
+                )
+
         messages.info(
             request,
             _("The checkout process was canceled. No charges were made."),

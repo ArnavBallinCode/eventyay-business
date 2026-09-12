@@ -698,65 +698,67 @@ class OrganizerAddonPurchaseView(
                             organizer=self.request.organizer.slug,
                         )
 
-            if self.addon.price and self.addon.price > 0 and is_stripe_configured():
+            is_paid_stripe = (
+                self.addon.price and self.addon.price > 0 and is_stripe_configured()
+            )
+            if is_paid_stripe:
                 assignment = form.save(commit=False, status=AddonStatus.PENDING)
                 assignment.status = AddonStatus.PENDING
                 assignment.save()
-
-                success_url = self.request.build_absolute_uri(
-                    reverse(
-                        "plugins:eventyay_business:checkout.success",
-                        kwargs={"organizer": self.request.organizer.slug},
-                    )
+            else:
+                form.save()
+                messages.success(
+                    self.request,
+                    _("The %(addon)s add-on has been added to your organisation.")
+                    % {"addon": self.addon.name},
                 )
-                cancel_url = self.request.build_absolute_uri(
-                    reverse(
-                        "plugins:eventyay_business:checkout.cancel",
-                        kwargs={"organizer": self.request.organizer.slug},
-                    )
-                )
-                try:
-                    checkout_url = create_addon_checkout_session(
-                        organizer=self.request.organizer,
-                        addon=self.addon,
-                        user=self.request.user,
-                        quantity=form.cleaned_data.get("quantity", 1),
-                        event=form.cleaned_data.get("event"),
-                        success_url=success_url,
-                        cancel_url=cancel_url,
-                        assignment=assignment,
-                    )
-                    if checkout_url:
-                        return redirect(checkout_url)
-                    messages.error(
-                        self.request,
-                        _(
-                            "Could not initiate payment session. Please try again later."
-                        ),
-                    )
-                except Exception as exc:
-                    logger.exception(
-                        "Failed to create Stripe checkout session for organizer addon: %s",
-                        exc,
-                    )
-                    messages.error(
-                        self.request,
-                        _("Payment provider error: %(error)s") % {"error": str(exc)},
-                    )
-                if assignment.pk and assignment.status == AddonStatus.PENDING:
-                    assignment.delete()
                 return redirect(
                     "plugins:eventyay_business:organizer.plan",
                     organizer=self.request.organizer.slug,
                 )
 
-            form.save()
-
-        messages.success(
-            self.request,
-            _("Add-on '%(name)s' has been successfully added to your plan.")
-            % {"name": self.addon.name},
+        # Transaction committed, lock released. Create Stripe checkout session.
+        success_url = self.request.build_absolute_uri(
+            reverse(
+                "plugins:eventyay_business:checkout.success",
+                kwargs={"organizer": self.request.organizer.slug},
+            )
         )
+        cancel_url = self.request.build_absolute_uri(
+            reverse(
+                "plugins:eventyay_business:checkout.cancel",
+                kwargs={"organizer": self.request.organizer.slug},
+            )
+        )
+        cancel_url = f"{cancel_url}?assignment_id={assignment.pk}&scope={self.addon.assignment_scope}"
+        try:
+            checkout_url = create_addon_checkout_session(
+                organizer=self.request.organizer,
+                addon=self.addon,
+                user=self.request.user,
+                quantity=form.cleaned_data.get("quantity", 1),
+                event=form.cleaned_data.get("event"),
+                success_url=success_url,
+                cancel_url=cancel_url,
+                assignment=assignment,
+            )
+            if checkout_url:
+                return redirect(checkout_url)
+            messages.error(
+                self.request,
+                _("Could not initiate payment session. Please try again later."),
+            )
+        except Exception as exc:
+            logger.exception(
+                "Failed to create Stripe checkout session for organizer addon: %s",
+                exc,
+            )
+            messages.error(
+                self.request,
+                _("Payment provider error: %(error)s") % {"error": str(exc)},
+            )
+        if assignment.pk and assignment.status == AddonStatus.PENDING:
+            assignment.delete()
         return redirect(
             "plugins:eventyay_business:organizer.plan",
             organizer=self.request.organizer.slug,
@@ -943,72 +945,74 @@ class EventDashboardAddonPurchaseView(EventPermissionRequiredMixin, FormView):
                         event=self.request.event.slug,
                     )
 
-            if self.addon.price and self.addon.price > 0 and is_stripe_configured():
+            is_paid_stripe = (
+                self.addon.price and self.addon.price > 0 and is_stripe_configured()
+            )
+            if is_paid_stripe:
                 assignment = form.save(commit=False, status=AddonStatus.PENDING)
                 assignment.status = AddonStatus.PENDING
                 assignment.save()
-
-                success_url = self.request.build_absolute_uri(
-                    reverse(
-                        "plugins:eventyay_business:event.checkout.success",
-                        kwargs={
-                            "organizer": self.request.organizer.slug,
-                            "event": self.request.event.slug,
-                        },
-                    )
+            else:
+                form.save()
+                messages.success(
+                    self.request,
+                    _("The %(addon)s add-on has been added to %(event)s.")
+                    % {"addon": self.addon.name, "event": self.request.event.name},
                 )
-                cancel_url = self.request.build_absolute_uri(
-                    reverse(
-                        "plugins:eventyay_business:event.checkout.cancel",
-                        kwargs={
-                            "organizer": self.request.organizer.slug,
-                            "event": self.request.event.slug,
-                        },
-                    )
-                )
-                try:
-                    checkout_url = create_addon_checkout_session(
-                        organizer=self.request.organizer,
-                        addon=self.addon,
-                        user=self.request.user,
-                        quantity=form.cleaned_data.get("quantity", 1),
-                        event=self.request.event,
-                        success_url=success_url,
-                        cancel_url=cancel_url,
-                        assignment=assignment,
-                    )
-                    if checkout_url:
-                        return redirect(checkout_url)
-                    messages.error(
-                        self.request,
-                        _(
-                            "Could not initiate payment session. Please try again later."
-                        ),
-                    )
-                except Exception as exc:
-                    logger.exception(
-                        "Failed to create Stripe checkout session for event addon: %s",
-                        exc,
-                    )
-                    messages.error(
-                        self.request,
-                        _("Payment provider error: %(error)s") % {"error": str(exc)},
-                    )
-                if assignment.pk and assignment.status == AddonStatus.PENDING:
-                    assignment.delete()
                 return redirect(
                     "plugins:eventyay_business:event.addons",
                     organizer=self.request.organizer.slug,
                     event=self.request.event.slug,
                 )
 
-            form.save()
-
-        messages.success(
-            self.request,
-            _("Add-on '%(name)s' has been successfully activated for %(event)s.")
-            % {"name": self.addon.name, "event": self.request.event.name},
+        # Transaction committed, lock released. Create Stripe checkout session.
+        success_url = self.request.build_absolute_uri(
+            reverse(
+                "plugins:eventyay_business:event.checkout.success",
+                kwargs={
+                    "organizer": self.request.organizer.slug,
+                    "event": self.request.event.slug,
+                },
+            )
         )
+        cancel_url = self.request.build_absolute_uri(
+            reverse(
+                "plugins:eventyay_business:event.checkout.cancel",
+                kwargs={
+                    "organizer": self.request.organizer.slug,
+                    "event": self.request.event.slug,
+                },
+            )
+        )
+        cancel_url = f"{cancel_url}?assignment_id={assignment.pk}&scope=event"
+        try:
+            checkout_url = create_addon_checkout_session(
+                organizer=self.request.organizer,
+                addon=self.addon,
+                user=self.request.user,
+                quantity=form.cleaned_data.get("quantity", 1),
+                event=self.request.event,
+                success_url=success_url,
+                cancel_url=cancel_url,
+                assignment=assignment,
+            )
+            if checkout_url:
+                return redirect(checkout_url)
+            messages.error(
+                self.request,
+                _("Could not initiate payment session. Please try again later."),
+            )
+        except Exception as exc:
+            logger.exception(
+                "Failed to create Stripe checkout session for event addon: %s",
+                exc,
+            )
+            messages.error(
+                self.request,
+                _("Payment provider error: %(error)s") % {"error": str(exc)},
+            )
+        if assignment.pk and assignment.status == AddonStatus.PENDING:
+            assignment.delete()
         return redirect(
             "plugins:eventyay_business:event.addons",
             organizer=self.request.organizer.slug,

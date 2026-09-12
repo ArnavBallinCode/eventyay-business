@@ -41,12 +41,7 @@ def is_stripe_configured() -> bool:
     """Return True if Stripe secret key is available in Eventyay configuration."""
     if stripe is None:
         return False
-    try:
-        from eventyay.helpers.stripe_utils import get_stripe_secret_key
-
-        return bool(get_stripe_secret_key())
-    except Exception:
-        return False
+    return bool(get_stripe_secret_key_safe())
 
 
 def get_stripe_secret_key_safe() -> Optional[str]:
@@ -100,6 +95,30 @@ def get_or_create_stripe_customer(organizer, user=None) -> Optional[str]:
             name=organizer.name,
             metadata={"organizer_slug": organizer.slug},
         )
+        # Persist customer.id so subsequent calls do not create duplicate customers
+        active_sub = (
+            organizer.subscriptions.filter(status=SubscriptionStatus.ACTIVE).first()
+            or organizer.subscriptions.first()
+        )
+        if active_sub:
+            active_sub.stripe_customer_id = customer.id
+            active_sub.save(update_fields=["stripe_customer_id"])
+        else:
+            try:
+                from eventyay.base.models.organizer import OrganizerBillingModel
+
+                billing, _ = OrganizerBillingModel.objects.get_or_create(
+                    organizer=organizer,
+                    defaults={
+                        "primary_contact_name": organizer.name,
+                        "primary_contact_email": email,
+                    },
+                )
+                billing.stripe_customer_id = customer.id
+                billing.save(update_fields=["stripe_customer_id"])
+            except Exception:
+                pass
+
         return customer.id
     except Exception as exc:
         logger.error("Failed to create Stripe customer for %s: %s", organizer.slug, exc)
@@ -678,6 +697,10 @@ def process_subscription_change(event_type: str, sub_data: dict):
 
     stripe_status = sub_data.get("status")  # active, past_due, canceled, unpaid
     period_end_ts = sub_data.get("current_period_end")
+    if not period_end_ts:
+        items_data = (sub_data.get("items") or {}).get("data", [])
+        if items_data and isinstance(items_data, list):
+            period_end_ts = items_data[0].get("current_period_end")
     period_end = (
         datetime.fromtimestamp(period_end_ts, tz=timezone.utc)
         if period_end_ts
@@ -757,6 +780,10 @@ def process_subscription_change(event_type: str, sub_data: dict):
 def process_invoice_payment_failed(invoice_data: dict):
     stripe_sub_id = invoice_data.get("subscription")
     if not stripe_sub_id:
+        parent = invoice_data.get("parent") or {}
+        if parent.get("type") == "subscription_details":
+            stripe_sub_id = parent.get("subscription_details", {}).get("subscription")
+    if not stripe_sub_id:
         return
     with scopes_disabled():
         with transaction.atomic():
@@ -794,6 +821,10 @@ def process_invoice_payment_failed(invoice_data: dict):
 
 def process_invoice_paid(invoice_data: dict):
     stripe_sub_id = invoice_data.get("subscription")
+    if not stripe_sub_id:
+        parent = invoice_data.get("parent") or {}
+        if parent.get("type") == "subscription_details":
+            stripe_sub_id = parent.get("subscription_details", {}).get("subscription")
     if not stripe_sub_id:
         return
     with scopes_disabled():

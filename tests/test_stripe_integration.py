@@ -1,4 +1,5 @@
 import pytest
+from datetime import timedelta
 from decimal import Decimal
 from django.test import RequestFactory, override_settings
 from django.urls import reverse
@@ -28,11 +29,17 @@ from eventyay_business.stripe_service import (
     create_subscription_checkout_session,
     get_or_create_stripe_customer,
     is_stripe_configured,
+    process_invoice_paid,
+    process_invoice_payment_failed,
+    process_subscription_change,
     process_webhook_event,
     sync_addon_to_stripe,
     sync_tier_price_to_stripe,
 )
-from eventyay_business.views_stripe import stripe_business_webhook_view
+from eventyay_business.views_stripe import (
+    StripeCheckoutCancelView,
+    stripe_business_webhook_view,
+)
 
 
 @pytest.fixture
@@ -168,6 +175,11 @@ def test_get_or_create_stripe_customer(setup_data):
             res = get_or_create_stripe_customer(organizer, user=user)
             assert res == "cus_new_456"
             mock_create.assert_called_once()
+            from eventyay.base.models.organizer import OrganizerBillingModel
+
+            assert OrganizerBillingModel.objects.filter(
+                organizer=organizer, stripe_customer_id="cus_new_456"
+            ).exists()
 
 
 @pytest.mark.django_db
@@ -774,3 +786,108 @@ def test_organizer_plan_upgrade_view_flow(setup_data, admin_user, admin_client):
             assert resp.status_code == 302
             assert resp.url == "https://checkout.stripe.com/c/pay/cs_tier_upgrade_123"
             mock_checkout.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_stripe_checkout_cancel_view_cleanup(setup_data):
+    organizer, event, user, _, _, _, recurring_addon, one_time_event_addon, _ = (
+        setup_data
+    )
+
+    rf = RequestFactory()
+
+    from django.contrib.messages.storage.fallback import FallbackStorage
+    from django.contrib.sessions.backends.db import SessionStore
+
+    # 1. Organizer-scoped pending addon deleted on cancel
+    org_pending = OrganizerAddon.objects.create(
+        organizer=organizer,
+        addon=recurring_addon,
+        status=AddonStatus.PENDING,
+        quantity=1,
+    )
+    req = rf.get(
+        reverse(
+            "plugins:eventyay_business:checkout.cancel",
+            kwargs={"organizer": organizer.slug},
+        )
+        + f"?assignment_id={org_pending.pk}&scope=organizer"
+    )
+    req.user = user
+    req.session = SessionStore()
+    setattr(req, "_messages", FallbackStorage(req))
+    resp = StripeCheckoutCancelView.as_view()(req, organizer=organizer.slug)
+    assert resp.status_code == 302
+    assert not OrganizerAddon.objects.filter(pk=org_pending.pk).exists()
+
+    # 2. Event-scoped pending addon deleted on cancel
+    event_pending = EventAddon.objects.create(
+        event=event,
+        addon=one_time_event_addon,
+        status=AddonStatus.PENDING,
+        quantity=1,
+    )
+    req_event = rf.get(
+        reverse(
+            "plugins:eventyay_business:event.checkout.cancel",
+            kwargs={"organizer": organizer.slug, "event": event.slug},
+        )
+        + f"?assignment_id={event_pending.pk}&scope=event"
+    )
+    req_event.user = user
+    req_event.session = SessionStore()
+    setattr(req_event, "_messages", FallbackStorage(req_event))
+    resp_event = StripeCheckoutCancelView.as_view()(
+        req_event, organizer=organizer.slug, event=event.slug
+    )
+    assert resp_event.status_code == 302
+    assert not EventAddon.objects.filter(pk=event_pending.pk).exists()
+
+
+@pytest.mark.django_db
+def test_stripe_api_2025_03_31_compatibility(setup_data):
+    organizer, _, _, _, _, _, _, _, _ = setup_data
+    sub = organizer.subscriptions.filter(status=SubscriptionStatus.ACTIVE).first()
+    if not sub:
+        sub = Subscription.objects.create(
+            organizer=organizer,
+            tier_version=setup_data[4],
+            status=SubscriptionStatus.ACTIVE,
+            starts_at=now(),
+        )
+    sub.stripe_subscription_id = "sub_test_2025"
+    sub.save()
+
+    # 1. Subscription change with current_period_end inside items.data
+    future_ts = int((now() + timedelta(days=60)).timestamp())
+    sub_data = {
+        "id": "sub_test_2025",
+        "status": "active",
+        "items": {"data": [{"current_period_end": future_ts}]},
+    }
+    process_subscription_change("customer.subscription.updated", sub_data)
+    sub.refresh_from_db()
+    assert sub.ends_at is not None
+    assert int(sub.ends_at.timestamp()) == future_ts
+
+    # 2. Invoice failed with subscription inside parent.subscription_details
+    invoice_failed_data = {
+        "parent": {
+            "type": "subscription_details",
+            "subscription_details": {"subscription": "sub_test_2025"},
+        }
+    }
+    process_invoice_payment_failed(invoice_failed_data)
+    sub.refresh_from_db()
+    assert sub.status == SubscriptionStatus.PAST_DUE
+
+    # 3. Invoice paid with subscription inside parent.subscription_details
+    invoice_paid_data = {
+        "parent": {
+            "type": "subscription_details",
+            "subscription_details": {"subscription": "sub_test_2025"},
+        }
+    }
+    process_invoice_paid(invoice_paid_data)
+    sub.refresh_from_db()
+    assert sub.status == SubscriptionStatus.ACTIVE
