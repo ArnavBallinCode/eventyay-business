@@ -66,8 +66,15 @@
                                     {% endif %}
                                 </td>
                                 <td class="text-right">
-                                    {% if addon.status == "active" %}
+                                    {% if addon.cancel_at %}
+                                        <span class="label label-warning">
+                                            <i class="fa fa-clock-o"></i> {% trans "Cancels" %} {{ addon.cancel_at|date:"SHORT_DATE_FORMAT" }}
+                                        </span>
+                                    {% elif addon.status == "active" %}
                                         <span class="label label-success">{% trans "Active" %}</span>
+                                        <a href="{% url 'plugins:eventyay_business:event.addon.cancel' organizer=request.organizer.slug event=request.event.slug pk=addon.pk %}" class="btn btn-default btn-xs text-danger" style="margin-left: 6px;">
+                                            <i class="fa fa-times"></i> {% trans "Cancel" %}
+                                        </a>
                                     {% elif addon.status == "expired" %}
                                         <span class="label label-default">{% trans "Expired" %}</span>
                                     {% else %}

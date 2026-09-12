@@ -94,6 +94,11 @@ urlpatterns = [
         name="addons.assignments.organizer.edit",
     ),
     path(
+        "admin/global/business/addons/assignments/organizers/<int:pk>/revoke/",
+        views.OrganizerAddonAdminRevokeView.as_view(),
+        name="addons.assignments.organizer.revoke",
+    ),
+    path(
         "admin/global/business/addons/assignments/events/",
         views.EventAddonListView.as_view(),
         name="addons.assignments.event.list",
@@ -108,6 +113,11 @@ urlpatterns = [
         views.EventAddonUpdateView.as_view(),
         name="addons.assignments.event.edit",
     ),
+    path(
+        "admin/global/business/addons/assignments/events/<int:pk>/revoke/",
+        views.EventAddonAdminRevokeView.as_view(),
+        name="addons.assignments.event.revoke",
+    ),
     # Organizer URLs
     path(
         "control/organizer/<str:organizer>/business/plan/",
@@ -119,6 +129,11 @@ urlpatterns = [
         views.OrganizerAddonPurchaseView.as_view(),
         name="organizer.addon.purchase",
     ),
+    path(
+        "control/organizer/<str:organizer>/business/addons/<int:pk>/cancel/",
+        views.OrganizerAddonCancelView.as_view(),
+        name="organizer.addon.cancel",
+    ),
     # Event Dashboard URLs
     path(
         "control/event/<str:organizer>/<str:event>/business/addons/",
@@ -129,5 +144,10 @@ urlpatterns = [
         "control/event/<str:organizer>/<str:event>/business/addons/<int:pk>/purchase/",
         views.EventDashboardAddonPurchaseView.as_view(),
         name="event.addon.purchase",
+    ),
+    path(
+        "control/event/<str:organizer>/<str:event>/business/addons/<int:pk>/cancel/",
+        views.EventAddonCancelView.as_view(),
+        name="event.addon.cancel",
     ),
 ]

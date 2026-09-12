@@ -1,0 +1,72 @@
+{% extends "pretixcontrol/organizers/base.html" %}
+{% load i18n %}
+{% load bootstrap3 %}
+
+{% block title %}{% trans "Cancel Add-on" %} - {{ assignment.addon.name }}{% endblock %}
+
+{% block inner %}
+    <h1>{% trans "Cancel Add-on" %}: {{ assignment.addon.name }}</h1>
+
+    <div class="panel panel-danger">
+        <div class="panel-heading">
+            <h3 class="panel-title">
+                <i class="fa fa-exclamation-triangle"></i>
+                {% trans "Confirm Cancellation" %}
+            </h3>
+        </div>
+        <div class="panel-body">
+            <p>
+                {% blocktrans with name=assignment.addon.name %}
+                    Are you sure you want to cancel the add-on <strong>{{ name }}</strong> for your organisation?
+                {% endblocktrans %}
+            </p>
+            <p class="text-muted">
+                {% trans "Included capability:" %} <code>{{ assignment.capability|default:assignment.addon.capability }}</code> ({{ assignment.entitlement_value|default:assignment.addon.entitlement_value }})
+            </p>
+
+            <form method="post">
+                {% csrf_token %}
+
+                {% if assignment.ends_at %}
+                    <div class="form-group">
+                        <label><strong>{% trans "Cancellation Timing:" %}</strong></label>
+                        <div class="radio">
+                            <label>
+                                <input type="radio" name="immediate" value="0" checked>
+                                <strong>{% trans "Cancel at end of current billing period" %}</strong>
+                                ({{ assignment.ends_at|date:"SHORT_DATETIME_FORMAT" }})
+                                <div class="help-block" style="margin-top: 2px;">
+                                    {% trans "You will retain access to the add-on features until the end of your prepaid period." %}
+                                </div>
+                            </label>
+                        </div>
+                        <div class="radio">
+                            <label>
+                                <input type="radio" name="immediate" value="1">
+                                <strong>{% trans "Cancel immediately" %}</strong>
+                                <div class="help-block" style="margin-top: 2px;">
+                                    {% trans "Access to this add-on will be revoked immediately." %}
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                {% else %}
+                    <p class="alert alert-warning">
+                        <i class="fa fa-info-circle"></i>
+                        {% trans "This continuous add-on has no scheduled expiration date and will be canceled immediately upon confirmation." %}
+                    </p>
+                    <input type="hidden" name="immediate" value="1">
+                {% endif %}
+
+                <div class="form-group" style="margin-top: 20px;">
+                    <button type="submit" class="btn btn-danger">
+                        <i class="fa fa-times"></i> {% trans "Confirm Cancellation" %}
+                    </button>
+                    <a href="{% url 'plugins:eventyay_business:organizer.plan' organizer=organizer.slug %}" class="btn btn-default">
+                        {% trans "Keep Add-on" %}
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+{% endblock %}
