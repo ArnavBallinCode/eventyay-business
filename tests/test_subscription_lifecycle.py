@@ -83,6 +83,7 @@ def lifecycle_data():
         slug="pro-tier",
         status=TierStatus.PUBLISHED,
         is_public=True,
+        display_order=1,
     )
     pro_version = TierVersion.objects.create(
         tier=pro_tier, version=1, published_at=now()
@@ -687,3 +688,339 @@ def test_plan_view_renders_configured_grace_period(client, lifecycle_data):
     assert res.status_code == 200
     content = res.content.decode("utf-8")
     assert "14-day grace period" in content
+
+
+@pytest.mark.django_db
+@override_settings(SITE_URL="https://testserver")
+def test_plan_view_renders_cancel_button_only_for_paid_tier(client, lifecycle_data):
+    (
+        organizer,
+        free_tier,
+        free_version,
+        free_price,
+        pro_tier,
+        pro_version,
+        pro_price,
+        user,
+    ) = lifecycle_data
+    client.force_login(user)
+
+    url = reverse(
+        "plugins:eventyay_business:organizer.plan",
+        kwargs={"organizer": organizer.slug},
+    )
+
+    # Free tier subscription: should NOT have Cancel Subscription button
+    sub = Subscription.objects.get(organizer=organizer)
+    assert sub.tier_version == free_version
+    res = client.get(url)
+    assert res.status_code == 200
+    assert "Cancel Subscription" not in res.content.decode("utf-8")
+    assert "#cancelSubscriptionModal" not in res.content.decode("utf-8")
+
+    # Upgrade to Pro tier
+    sub.tier_version = pro_version
+    sub.ends_at = now() + timedelta(days=20)
+    sub.save()
+
+    res = client.get(url)
+    assert res.status_code == 200
+    content = res.content.decode("utf-8")
+    assert "Cancel Subscription" in content
+    assert "cancelSubscriptionModal" in content
+
+
+@pytest.mark.django_db
+@override_settings(SITE_URL="https://testserver")
+def test_organizer_plan_cancel_scheduled_downgrade(client, lifecycle_data):
+    (
+        organizer,
+        free_tier,
+        free_version,
+        free_price,
+        pro_tier,
+        pro_version,
+        pro_price,
+        user,
+    ) = lifecycle_data
+    client.force_login(user)
+
+    sub = Subscription.objects.get(organizer=organizer)
+    sub.tier_version = pro_version
+    sub.ends_at = now() + timedelta(days=15)
+    sub.stripe_subscription_id = "sub_stripe_to_cancel"
+    sub.save()
+
+    url = reverse(
+        "plugins:eventyay_business:organizer.plan.cancel",
+        kwargs={"organizer": organizer.slug},
+    )
+    with (
+        patch("eventyay_business.views.is_stripe_configured", return_value=True),
+        patch(
+            "eventyay_business.views.get_stripe_secret_key_safe",
+            return_value="sk_test_123",
+        ),
+        patch("stripe.Subscription.modify") as mock_modify,
+    ):
+        res = client.post(url, follow=True)
+        assert res.status_code == 200
+        mock_modify.assert_called_once_with(
+            "sub_stripe_to_cancel", cancel_at_period_end=True
+        )
+
+    sub.refresh_from_db()
+    assert sub.has_scheduled_downgrade is True
+    assert sub.pending_tier_version == free_version
+    assert sub.pending_change_at == sub.ends_at
+    assert sub.tier_version == pro_version
+
+
+@pytest.mark.django_db
+@override_settings(SITE_URL="https://testserver")
+def test_organizer_plan_cancel_immediate_when_no_ends_at(
+    client, lifecycle_data, django_capture_on_commit_callbacks
+):
+    (
+        organizer,
+        free_tier,
+        free_version,
+        free_price,
+        pro_tier,
+        pro_version,
+        pro_price,
+        user,
+    ) = lifecycle_data
+    client.force_login(user)
+
+    sub = Subscription.objects.get(organizer=organizer)
+    sub.tier_version = pro_version
+    sub.ends_at = None
+    sub.stripe_subscription_id = ""
+    sub.save()
+
+    downgraded_signals = []
+
+    def handler(sender, instance, **kwargs):
+        downgraded_signals.append(instance)
+
+    subscription_downgraded.connect(handler)
+
+    url = reverse(
+        "plugins:eventyay_business:organizer.plan.cancel",
+        kwargs={"organizer": organizer.slug},
+    )
+    try:
+        with django_capture_on_commit_callbacks(execute=True):
+            res = client.post(url, follow=True)
+            assert res.status_code == 200
+    finally:
+        subscription_downgraded.disconnect(handler)
+
+    sub.refresh_from_db()
+    assert sub.has_scheduled_downgrade is False
+    assert sub.tier_version == free_version
+    assert len(downgraded_signals) == 1
+    assert downgraded_signals[0].pk == sub.pk
+
+
+@pytest.mark.django_db
+@override_settings(SITE_URL="https://testserver")
+def test_organizer_plan_cancel_already_free_or_scheduled(client, lifecycle_data):
+    (
+        organizer,
+        free_tier,
+        free_version,
+        free_price,
+        pro_tier,
+        pro_version,
+        pro_price,
+        user,
+    ) = lifecycle_data
+    client.force_login(user)
+
+    url = reverse(
+        "plugins:eventyay_business:organizer.plan.cancel",
+        kwargs={"organizer": organizer.slug},
+    )
+
+    # Sub is currently free tier
+    res = client.post(url, follow=True)
+    assert res.status_code == 200
+    messages = [m.message for m in get_messages(res.wsgi_request)]
+    assert any("already on the Free plan" in m for m in messages)
+
+    # Sub has scheduled downgrade
+    sub = Subscription.objects.get(organizer=organizer)
+    sub.tier_version = pro_version
+    sub.pending_tier_version = free_version
+    sub.pending_change_at = now() + timedelta(days=5)
+    sub.save()
+
+    res = client.post(url, follow=True)
+    assert res.status_code == 200
+    messages = [m.message for m in get_messages(res.wsgi_request)]
+    assert any("already has a scheduled plan change" in m for m in messages)
+
+
+@pytest.mark.django_db
+@override_settings(SITE_URL="https://testserver")
+def test_plan_upgrade_with_free_tier_version_id(client, lifecycle_data):
+    (
+        organizer,
+        free_tier,
+        free_version,
+        free_price,
+        pro_tier,
+        pro_version,
+        pro_price,
+        user,
+    ) = lifecycle_data
+    client.force_login(user)
+
+    # Delete free prices to simulate price-less free tier
+    TierPrice.objects.filter(tier_version=free_version).delete()
+
+    sub = Subscription.objects.get(organizer=organizer)
+    sub.tier_version = pro_version
+    sub.ends_at = now() + timedelta(days=10)
+    sub.save()
+
+    url = reverse(
+        "plugins:eventyay_business:organizer.plan.upgrade",
+        kwargs={"organizer": organizer.slug},
+    )
+
+    # GET displays Downgrade to Free
+    res = client.get(url)
+    assert res.status_code == 200
+    assert "Downgrade to Free" in res.content.decode("utf-8")
+
+    # POST tier_version_id
+    res = client.post(url, data={"tier_version_id": free_version.pk}, follow=True)
+    assert res.status_code == 200
+
+    sub.refresh_from_db()
+    assert sub.has_scheduled_downgrade is True
+    assert sub.pending_tier_version == free_version
+    assert sub.pending_change_at == sub.ends_at
+
+
+@pytest.mark.django_db
+def test_subscription_admin_form_grace_period(lifecycle_data):
+    from eventyay_business.forms import SubscriptionAdminForm
+
+    (
+        organizer,
+        free_tier,
+        free_version,
+        free_price,
+        pro_tier,
+        pro_version,
+        pro_price,
+        user,
+    ) = lifecycle_data
+
+    sub = Subscription.objects.get(organizer=organizer)
+    sub.configuration_snapshot = {"grace_period_days": 10}
+    sub.save()
+
+    form = SubscriptionAdminForm(instance=sub)
+    assert form.fields["grace_period_days"].initial == 10
+
+    data = {
+        "organizer": organizer.pk,
+        "tier_version": pro_version.pk,
+        "status": SubscriptionStatus.ACTIVE,
+        "billing_interval": BillingInterval.MONTHLY,
+        "currency": "EUR",
+        "starts_at_0": "2026-09-13",
+        "starts_at_1": "00:00:00",
+        "grace_period_days": 14,
+    }
+    form = SubscriptionAdminForm(data=data, instance=sub)
+    assert form.is_valid(), form.errors
+    saved_sub = form.save()
+    assert saved_sub.configuration_snapshot["grace_period_days"] == 14
+
+    # Empty grace_period_days clears it
+    data["grace_period_days"] = ""
+    form = SubscriptionAdminForm(data=data, instance=saved_sub)
+    assert form.is_valid(), form.errors
+    saved_sub = form.save()
+    assert "grace_period_days" not in saved_sub.configuration_snapshot
+
+
+@pytest.mark.django_db
+def test_tier_version_form_grace_period(lifecycle_data):
+    from eventyay_business.forms import TierVersionForm
+
+    (
+        organizer,
+        free_tier,
+        free_version,
+        free_price,
+        pro_tier,
+        pro_version,
+        pro_price,
+        user,
+    ) = lifecycle_data
+
+    pro_version.configuration_snapshot = {"grace_period_days": 12}
+    pro_version.save()
+
+    form = TierVersionForm(instance=pro_version)
+    assert form.fields["grace_period_days"].initial == 12
+
+    form = TierVersionForm(data={"grace_period_days": 5}, instance=pro_version)
+    assert form.is_valid(), form.errors
+    saved_version = form.save()
+    assert saved_version.configuration_snapshot["grace_period_days"] == 5
+
+    form = TierVersionForm(data={"grace_period_days": ""}, instance=saved_version)
+    assert form.is_valid(), form.errors
+    saved_version = form.save()
+    assert "grace_period_days" not in saved_version.configuration_snapshot
+
+
+@pytest.mark.django_db
+def test_global_business_settings_form_grace_period(lifecycle_data):
+    from eventyay.base.settings import GlobalSettingsObject
+    from eventyay.control.forms.global_settings import GlobalBusinessSettingsForm
+
+    from eventyay_business.services import get_grace_period_days
+
+    (
+        organizer,
+        free_tier,
+        free_version,
+        free_price,
+        pro_tier,
+        pro_version,
+        pro_price,
+        user,
+    ) = lifecycle_data
+
+    gs = GlobalSettingsObject()
+    gs.settings.set("business_grace_period_days", 21)
+
+    form = GlobalBusinessSettingsForm()
+    assert "business_grace_period_days" in form.fields
+    assert form.initial["business_grace_period_days"] == 21
+
+    sub = Subscription.objects.get(organizer=organizer)
+    assert sub.configuration_snapshot == {}
+    assert sub.tier_version.configuration_snapshot == {}
+
+    # Hierarchy: Global setting provides 21
+    assert get_grace_period_days(sub) == 21
+
+    # Tier version snapshot overrides global
+    sub.tier_version.configuration_snapshot = {"grace_period_days": 9}
+    sub.tier_version.save()
+    assert get_grace_period_days(sub) == 9
+
+    # Subscription snapshot overrides tier version
+    sub.configuration_snapshot = {"grace_period_days": 3}
+    sub.save()
+    assert get_grace_period_days(sub) == 3

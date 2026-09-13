@@ -19,6 +19,20 @@
         {% endif %}
     </h1>
 
+    {% if object and object.status == "past_due" %}
+        <div class="alert alert-warning">
+            <i class="fa fa-exclamation-triangle"></i>
+            <strong>{% trans "Past Due Subscription:" %}</strong>
+            {% if object.is_in_grace_period %}
+                {% blocktrans with end_date=object.grace_period_ends_at|date:"SHORT_DATE_FORMAT" days=object.grace_period_days %}
+                    This subscription is in a {{ days }}-day grace period ending on {{ end_date }}.
+                {% endblocktrans %}
+            {% else %}
+                {% trans "This subscription's grace period has expired." %}
+            {% endif %}
+        </div>
+    {% endif %}
+
     <form method="post" class="form-horizontal">
         {% csrf_token %}
         {% bootstrap_form form layout='horizontal' %}

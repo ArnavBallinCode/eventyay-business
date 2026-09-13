@@ -35,6 +35,21 @@
                             <span class="badge badge-{% if sub.status == 'active' %}success{% elif sub.status == 'canceled' %}danger{% else %}warning{% endif %}">
                                 {{ sub.get_status_display }}
                             </span>
+                            {% if sub.status == "past_due" and sub.is_in_grace_period %}
+                                <br>
+                                <small class="text-warning">
+                                    <i class="fa fa-clock-o"></i>
+                                    {% blocktrans with end_date=sub.grace_period_ends_at|date:"SHORT_DATE_FORMAT" %}
+                                        Grace until {{ end_date }}
+                                    {% endblocktrans %}
+                                </small>
+                            {% elif sub.status == "past_due" %}
+                                <br>
+                                <small class="text-danger">
+                                    <i class="fa fa-exclamation-circle"></i>
+                                    {% trans "Grace expired" %}
+                                </small>
+                            {% endif %}
                         </td>
                         <td>{{ sub.starts_at|date:"SHORT_DATE_FORMAT" }}</td>
                         <td>{{ sub.ends_at|date:"SHORT_DATE_FORMAT"|default:"-" }}</td>
