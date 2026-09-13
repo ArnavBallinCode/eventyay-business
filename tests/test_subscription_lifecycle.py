@@ -8,7 +8,7 @@ from django.utils.timezone import now
 from eventyay.base.entitlements import check_entitlement
 from eventyay.base.models import Organizer, Team, User
 from eventyay.base.models.auth import StaffSession
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from eventyay_business.models import (
     BillingInterval,
@@ -1027,3 +1027,121 @@ def test_global_business_settings_form_grace_period(lifecycle_data):
     sub.configuration_snapshot = {"grace_period_days": 3}
     sub.save()
     assert get_grace_period_days(sub) == 3
+
+
+@pytest.mark.django_db
+@override_settings(SITE_URL="https://testserver")
+def test_organizer_plan_cancel_with_stripe_period_end_when_no_ends_at(
+    client, lifecycle_data
+):
+    (
+        organizer,
+        free_tier,
+        free_version,
+        free_price,
+        pro_tier,
+        pro_version,
+        pro_price,
+        user,
+    ) = lifecycle_data
+    client.force_login(user)
+
+    sub = Subscription.objects.get(organizer=organizer)
+    sub.tier_version = pro_version
+    sub.ends_at = None
+    sub.stripe_subscription_id = "sub_stripe_no_ends_at"
+    sub.save()
+
+    future_ts = int((now() + timedelta(days=20)).timestamp())
+    mock_stripe_sub = MagicMock()
+    mock_stripe_sub.current_period_end = future_ts
+
+    url = reverse(
+        "plugins:eventyay_business:organizer.plan.cancel",
+        kwargs={"organizer": organizer.slug},
+    )
+    with (
+        patch("eventyay_business.views.is_stripe_configured", return_value=True),
+        patch(
+            "eventyay_business.views.get_stripe_secret_key_safe",
+            return_value="sk_test_123",
+        ),
+        patch(
+            "stripe.Subscription.modify", return_value=mock_stripe_sub
+        ) as mock_modify,
+    ):
+        res = client.post(url, follow=True)
+        assert res.status_code == 200
+        mock_modify.assert_called_once_with(
+            "sub_stripe_no_ends_at", cancel_at_period_end=True
+        )
+
+    sub.refresh_from_db()
+    assert sub.has_scheduled_downgrade is True
+    assert sub.pending_tier_version == free_version
+    assert sub.pending_change_at is not None
+    assert int(sub.pending_change_at.timestamp()) == future_ts
+    assert sub.ends_at is not None
+    assert int(sub.ends_at.timestamp()) == future_ts
+    assert sub.tier_version == pro_version
+
+
+@pytest.mark.django_db
+@override_settings(SITE_URL="https://testserver")
+def test_plan_upgrade_rejects_non_free_tier_version_id(client, lifecycle_data):
+    (
+        organizer,
+        free_tier,
+        free_version,
+        free_price,
+        pro_tier,
+        pro_version,
+        pro_price,
+        user,
+    ) = lifecycle_data
+    client.force_login(user)
+
+    sub = Subscription.objects.get(organizer=organizer)
+    assert sub.tier_version == free_version
+
+    url = reverse(
+        "plugins:eventyay_business:organizer.plan.upgrade",
+        kwargs={"organizer": organizer.slug},
+    )
+
+    # Submitting pro_version as tier_version_id should be rejected
+    res = client.post(url, data={"tier_version_id": pro_version.pk}, follow=True)
+    assert res.status_code == 200
+    messages = [m.message for m in get_messages(res.wsgi_request)]
+    assert any("Invalid plan selected" in m for m in messages)
+
+    sub.refresh_from_db()
+    assert sub.tier_version == free_version
+
+
+@pytest.mark.django_db
+def test_tier_new_draft_preserves_configuration_snapshot(
+    business_admin_client, lifecycle_data
+):
+    (
+        organizer,
+        free_tier,
+        free_version,
+        free_price,
+        pro_tier,
+        pro_version,
+        pro_price,
+        user,
+    ) = lifecycle_data
+
+    pro_version.configuration_snapshot = {"grace_period_days": 15}
+    pro_version.save()
+
+    url = reverse("plugins:eventyay_business:tiers.draft", kwargs={"pk": pro_tier.pk})
+    res = business_admin_client.post(url)
+    assert res.status_code == 302
+
+    new_draft = pro_tier.versions.filter(published_at__isnull=True).first()
+    assert new_draft is not None
+    assert new_draft.version == pro_version.version + 1
+    assert new_draft.configuration_snapshot.get("grace_period_days") == 15

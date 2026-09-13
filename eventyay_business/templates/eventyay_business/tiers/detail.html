@@ -47,7 +47,7 @@
                     </h3>
                 </div>
                 <div class="panel-body">
-                    {% if latest_version.configuration_snapshot.grace_period_days %}
+                    {% if latest_version.configuration_snapshot.grace_period_days is not None %}
                         <p>
                             <strong>{% trans "Grace Period:" %}</strong>
                             {{ latest_version.configuration_snapshot.grace_period_days }} {% trans "days" %}
