@@ -39,6 +39,7 @@ from .forms import (
     TierEntitlementFormSet,
     TierForm,
     TierPriceFormSet,
+    TierVersionForm,
 )
 from .models import (
     AddonAssignmentScope,
@@ -138,6 +139,9 @@ class TierUpdateView(AdministratorPermissionRequiredMixin, UpdateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         if self.request.POST:
+            context["version_form"] = TierVersionForm(
+                self.request.POST, instance=self.latest_version
+            )
             context["price_formset"] = TierPriceFormSet(
                 self.request.POST, instance=self.latest_version
             )
@@ -145,6 +149,7 @@ class TierUpdateView(AdministratorPermissionRequiredMixin, UpdateView):
                 self.request.POST, instance=self.latest_version
             )
         else:
+            context["version_form"] = TierVersionForm(instance=self.latest_version)
             context["price_formset"] = TierPriceFormSet(instance=self.latest_version)
             context["entitlement_formset"] = TierEntitlementFormSet(
                 instance=self.latest_version
@@ -154,11 +159,13 @@ class TierUpdateView(AdministratorPermissionRequiredMixin, UpdateView):
     @transaction.atomic
     def form_valid(self, form):
         context = self.get_context_data()
+        version_form = context["version_form"]
         price_formset = context["price_formset"]
         entitlement_formset = context["entitlement_formset"]
 
         if (
             form.is_valid()
+            and version_form.is_valid()
             and price_formset.is_valid()
             and entitlement_formset.is_valid()
         ):
@@ -180,6 +187,7 @@ class TierUpdateView(AdministratorPermissionRequiredMixin, UpdateView):
                 )
 
             self.object = form.save()
+            version_form.save()
             price_formset.save()
             entitlement_formset.save()
             messages.success(self.request, _("Tier draft saved successfully."))
@@ -250,7 +258,10 @@ class TierNewDraftView(AdministratorPermissionRequiredMixin, View):
 
         # Duplicate version
         new_version = TierVersion.objects.create(
-            tier=tier, version=latest_version.version + 1, created_by=request.user
+            tier=tier,
+            version=latest_version.version + 1,
+            created_by=request.user,
+            configuration_snapshot=dict(latest_version.configuration_snapshot or {}),
         )
 
         # Duplicate prices
@@ -536,24 +547,53 @@ class OrganizerPlanUpgradeView(
 
     def post(self, request, *args, **kwargs):
         tier_price_id = request.POST.get("tier_price_id")
-        if not tier_price_id:
+        tier_version_id = request.POST.get("tier_version_id")
+        if not tier_price_id and not tier_version_id:
             messages.error(request, _("Please select a plan."))
             return redirect(
                 "plugins:eventyay_business:organizer.plan.upgrade",
                 organizer=request.organizer.slug,
             )
 
-        tier_price = get_object_or_404(
-            TierPrice.objects.select_related("tier_version__tier"),
-            pk=tier_price_id,
-            active=True,
-            tier_version__tier__status=TierStatus.PUBLISHED,
-        )
+        tier_price = None
+        target_version = None
+        target_interval = BillingInterval.MONTHLY
+        amount = Decimal("0.00")
+
+        if tier_price_id:
+            tier_price = get_object_or_404(
+                TierPrice.objects.select_related("tier_version__tier"),
+                pk=tier_price_id,
+                active=True,
+                tier_version__tier__status=TierStatus.PUBLISHED,
+            )
+            target_version = tier_price.tier_version
+            target_interval = tier_price.billing_interval
+            amount = getattr(tier_price, "amount", None)
+            if amount is None:
+                amount = getattr(tier_price, "price", Decimal("0.00"))
+        else:
+            target_version = get_object_or_404(
+                TierVersion.objects.select_related("tier"),
+                pk=tier_version_id,
+                tier__status=TierStatus.PUBLISHED,
+                tier__is_public=True,
+                published_at__isnull=False,
+            )
+            is_valid_free = (
+                target_version.tier.slug.lower() == "free"
+                or target_version.tier.name.strip().lower() == "free"
+            ) and not target_version.prices.filter(active=True, amount__gt=0).exists()
+            if not is_valid_free:
+                messages.error(request, _("Invalid plan selected."))
+                return redirect(
+                    "plugins:eventyay_business:organizer.plan.upgrade",
+                    organizer=request.organizer.slug,
+                )
+            target_interval = BillingInterval.MONTHLY
+            amount = Decimal("0.00")
 
         organizer = request.organizer
-        amount = getattr(tier_price, "amount", None)
-        if amount is None:
-            amount = getattr(tier_price, "price", Decimal("0.00"))
 
         active_sub = (
             Subscription.objects.filter(
@@ -568,7 +608,7 @@ class OrganizerPlanUpgradeView(
         current_amount = Decimal("0.00")
         if active_sub and active_sub.tier_version:
             current_tier = active_sub.tier_version.tier
-            target_tier = tier_price.tier_version.tier
+            target_tier = target_version.tier
 
             curr_price = (
                 active_sub.tier_version.prices.filter(
@@ -587,11 +627,10 @@ class OrganizerPlanUpgradeView(
                 is_downgrade = False
             else:
                 # Same tier display order (e.g. interval change or same tier level)
-                if active_sub.billing_interval != tier_price.billing_interval:
+                if active_sub.billing_interval != target_interval:
                     norm_target = (
                         amount / Decimal("12")
-                        if tier_price.billing_interval
-                        in ("annual", "year", BillingInterval.ANNUAL)
+                        if target_interval in ("annual", "year", BillingInterval.ANNUAL)
                         else amount
                     )
                     norm_current = (
@@ -617,7 +656,7 @@ class OrganizerPlanUpgradeView(
             from .capabilities import default_registry
 
             current_time = now()
-            for ent in tier_price.tier_version.entitlements.all():
+            for ent in target_version.entitlements.all():
                 target_limit = ent.get_typed_value()
                 if target_limit is None or not isinstance(target_limit, int):
                     continue
@@ -657,7 +696,7 @@ class OrganizerPlanUpgradeView(
                             "current": current_usage,
                             "feature": cap_label,
                             "limit": target_limit,
-                            "tier": tier_price.tier_version.tier.name,
+                            "tier": target_version.tier.name,
                         },
                     )
 
@@ -682,8 +721,12 @@ class OrganizerPlanUpgradeView(
                             )
                             items = (stripe_sub.get("items") or {}).get("data", [])
                             target_price_id = (
-                                tier_price.stripe_price_id
-                                or sync_tier_price_to_stripe(tier_price)
+                                (
+                                    tier_price.stripe_price_id
+                                    or sync_tier_price_to_stripe(tier_price)
+                                )
+                                if tier_price
+                                else None
                             )
                             if items and target_price_id:
                                 stripe.Subscription.modify(
@@ -724,8 +767,8 @@ class OrganizerPlanUpgradeView(
                     )
 
                 if sub_locked.ends_at:
-                    sub_locked.pending_tier_version = tier_price.tier_version
-                    sub_locked.pending_billing_interval = tier_price.billing_interval
+                    sub_locked.pending_tier_version = target_version
+                    sub_locked.pending_billing_interval = target_interval
                     sub_locked.pending_change_at = sub_locked.ends_at
                     sub_locked.save(
                         update_fields=[
@@ -737,8 +780,8 @@ class OrganizerPlanUpgradeView(
                     )
                     is_immediate = False
                 else:
-                    sub_locked.tier_version = tier_price.tier_version
-                    sub_locked.billing_interval = tier_price.billing_interval
+                    sub_locked.tier_version = target_version
+                    sub_locked.billing_interval = target_interval
                     sub_locked.pending_tier_version = None
                     sub_locked.pending_billing_interval = None
                     sub_locked.pending_change_at = None
@@ -759,7 +802,7 @@ class OrganizerPlanUpgradeView(
                 messages.success(
                     request,
                     _("Your plan has been changed to %(tier)s.")
-                    % {"tier": tier_price.tier_version.tier.name},
+                    % {"tier": target_version.tier.name},
                 )
             else:
                 renewal_str = active_sub.ends_at.strftime("%b %d, %Y")
@@ -770,7 +813,7 @@ class OrganizerPlanUpgradeView(
                         "Your current plan features will remain active until then."
                     )
                     % {
-                        "tier": tier_price.tier_version.tier.name,
+                        "tier": target_version.tier.name,
                         "renewal": renewal_str,
                     },
                 )
@@ -821,6 +864,7 @@ class OrganizerPlanUpgradeView(
             )
 
         # Free tier or offline switch
+        target_currency = tier_price.currency if tier_price else None
         with transaction.atomic():
             Organizer.objects.select_for_update().get(pk=organizer.pk)
             active_sub = (
@@ -829,9 +873,10 @@ class OrganizerPlanUpgradeView(
                 .first()
             )
             if active_sub:
-                active_sub.tier_version = tier_price.tier_version
-                active_sub.billing_interval = tier_price.billing_interval
-                active_sub.currency = tier_price.currency
+                active_sub.tier_version = target_version
+                active_sub.billing_interval = target_interval
+                if target_currency:
+                    active_sub.currency = target_currency
                 active_sub.save(
                     update_fields=[
                         "tier_version",
@@ -844,10 +889,10 @@ class OrganizerPlanUpgradeView(
             else:
                 sub = Subscription.objects.create(
                     organizer=organizer,
-                    tier_version=tier_price.tier_version,
+                    tier_version=target_version,
                     status=SubscriptionStatus.ACTIVE,
-                    billing_interval=tier_price.billing_interval,
-                    currency=tier_price.currency,
+                    billing_interval=target_interval,
+                    currency=target_currency or "EUR",
                     starts_at=now(),
                 )
             invalidate_entitlement_cache(organizer=organizer)
@@ -858,7 +903,7 @@ class OrganizerPlanUpgradeView(
         messages.success(
             request,
             _("Successfully updated your plan to %(name)s.")
-            % {"name": tier_price.tier_version.tier.name},
+            % {"name": target_version.tier.name},
         )
         return redirect(
             "plugins:eventyay_business:organizer.plan", organizer=organizer.slug
@@ -936,6 +981,193 @@ class OrganizerPlanCancelDowngradeView(
                 "will continue renewing normally."
             ),
         )
+        return redirect(
+            "plugins:eventyay_business:organizer.plan",
+            organizer=organizer.slug,
+        )
+
+
+class OrganizerPlanCancelView(
+    OrganizerPermissionRequiredMixin, OrganizerDetailViewMixin, View
+):
+    permission = "can_change_organizer_settings"
+
+    def post(self, request, *args, **kwargs):
+        organizer = request.organizer
+        active_sub = (
+            Subscription.objects.filter(
+                organizer=organizer, status=SubscriptionStatus.ACTIVE
+            )
+            .select_related("tier_version__tier")
+            .first()
+        )
+        if not active_sub:
+            messages.error(request, _("No active subscription found."))
+            return redirect(
+                "plugins:eventyay_business:organizer.plan",
+                organizer=organizer.slug,
+            )
+
+        if (
+            active_sub.tier_version.tier.slug == "free"
+            or not active_sub.tier_version.prices.filter(amount__gt=0).exists()
+        ):
+            messages.info(
+                request,
+                _("You are already on the Free plan. No cancellation is required."),
+            )
+            return redirect(
+                "plugins:eventyay_business:organizer.plan",
+                organizer=organizer.slug,
+            )
+
+        if active_sub.has_scheduled_downgrade:
+            messages.info(
+                request,
+                _("Your subscription already has a scheduled plan change in progress."),
+            )
+            return redirect(
+                "plugins:eventyay_business:organizer.plan",
+                organizer=organizer.slug,
+            )
+
+        free_tier = (
+            Tier.objects.filter(slug="free", status=TierStatus.PUBLISHED).first()
+            or Tier.objects.filter(
+                name__iexact="Free", status=TierStatus.PUBLISHED
+            ).first()
+        )
+        if not free_tier:
+            messages.error(
+                request,
+                _("Free plan is currently not available. Please contact support."),
+            )
+            return redirect(
+                "plugins:eventyay_business:organizer.plan",
+                organizer=organizer.slug,
+            )
+
+        free_version = (
+            free_tier.versions.filter(published_at__isnull=False)
+            .order_by("-version")
+            .first()
+        )
+        if not free_version:
+            messages.error(
+                request,
+                _(
+                    "Free plan version is currently not available. Please contact support."
+                ),
+            )
+            return redirect(
+                "plugins:eventyay_business:organizer.plan",
+                organizer=organizer.slug,
+            )
+
+        stripe_period_end = None
+        # Reconcile with Stripe: cancel at period end
+        if active_sub.stripe_subscription_id and is_stripe_configured():
+            try:
+                import stripe
+
+                secret_key = get_stripe_secret_key_safe()
+                if secret_key:
+                    stripe.api_key = secret_key
+                    stripe_sub = stripe.Subscription.modify(
+                        active_sub.stripe_subscription_id,
+                        cancel_at_period_end=True,
+                    )
+                    period_end_ts = getattr(stripe_sub, "current_period_end", None)
+                    if period_end_ts:
+                        from datetime import datetime, timezone
+
+                        stripe_period_end = datetime.fromtimestamp(
+                            period_end_ts, tz=timezone.utc
+                        )
+            except Exception as exc:
+                logger.error("Failed to schedule Stripe cancellation: %s", exc)
+                messages.error(
+                    request,
+                    _("Failed to cancel subscription with payment provider: %s")
+                    % str(exc),
+                )
+                return redirect(
+                    "plugins:eventyay_business:organizer.plan",
+                    organizer=organizer.slug,
+                )
+
+        with transaction.atomic():
+            sub_locked = (
+                Subscription.objects.select_for_update()
+                .filter(pk=active_sub.pk)
+                .first()
+            )
+            if not sub_locked:
+                messages.error(request, _("Subscription not found."))
+                return redirect(
+                    "plugins:eventyay_business:organizer.plan",
+                    organizer=organizer.slug,
+                )
+
+            effective_ends_at = sub_locked.ends_at or stripe_period_end
+            if effective_ends_at:
+                sub_locked.pending_tier_version = free_version
+                sub_locked.pending_billing_interval = BillingInterval.MONTHLY
+                sub_locked.pending_change_at = effective_ends_at
+                if not sub_locked.ends_at:
+                    sub_locked.ends_at = effective_ends_at
+                sub_locked.save(
+                    update_fields=[
+                        "pending_tier_version",
+                        "pending_billing_interval",
+                        "pending_change_at",
+                        "ends_at",
+                        "updated_at",
+                    ]
+                )
+                is_immediate = False
+            else:
+                sub_locked.tier_version = free_version
+                sub_locked.billing_interval = BillingInterval.MONTHLY
+                sub_locked.pending_tier_version = None
+                sub_locked.pending_billing_interval = None
+                sub_locked.pending_change_at = None
+                sub_locked.save()
+                is_immediate = True
+                org_ref = organizer
+                inst_ref = sub_locked
+                transaction.on_commit(
+                    lambda org=org_ref, inst=inst_ref: (
+                        invalidate_entitlement_cache(organizer=org),
+                        subscription_downgraded.send(
+                            sender=Subscription, instance=inst
+                        ),
+                    )
+                )
+
+        if is_immediate:
+            messages.success(
+                request,
+                _(
+                    "Your subscription has been canceled and your plan changed to %(tier)s."
+                )
+                % {"tier": free_tier.name},
+            )
+        else:
+            renewal_str = effective_ends_at.strftime("%b %d, %Y")
+            messages.success(
+                request,
+                _(
+                    "Your subscription cancellation has been scheduled. Your current plan features "
+                    "will remain active until %(renewal)s, after which your account will transition "
+                    "to %(tier)s."
+                )
+                % {
+                    "tier": free_tier.name,
+                    "renewal": renewal_str,
+                },
+            )
+
         return redirect(
             "plugins:eventyay_business:organizer.plan",
             organizer=organizer.slug,

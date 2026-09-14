@@ -11,6 +11,11 @@
             <a href="{% url 'plugins:eventyay_business:organizer.plan.upgrade' organizer=request.organizer.slug %}" class="btn btn-default btn-xs pull-right">
                 <i class="fa fa-arrow-up"></i> {% trans "Change / Upgrade Plan" %}
             </a>
+            {% if subscription and subscription.tier_version.tier.slug != "free" and not subscription.has_scheduled_downgrade %}
+                <button type="button" class="btn btn-danger btn-xs pull-right" style="margin-right: 8px;" data-toggle="modal" data-target="#cancelSubscriptionModal">
+                    <i class="fa fa-times"></i> {% trans "Cancel Subscription" %}
+                </button>
+            {% endif %}
             <h3 class="panel-title">{% trans "Current Subscription" %}</h3>
         </div>
         <div class="panel-body">
@@ -394,5 +399,43 @@
             </table>
         </div>
     </details>
+
+    {% if subscription and subscription.tier_version.tier.slug != "free" and not subscription.has_scheduled_downgrade %}
+        <div class="modal fade" id="cancelSubscriptionModal" tabindex="-1" role="dialog" aria-labelledby="cancelSubscriptionModalLabel">
+            <div class="modal-dialog" role="document">
+                <div class="modal-content">
+                    <form method="post" action="{% url 'plugins:eventyay_business:organizer.plan.cancel' organizer=request.organizer.slug %}">
+                        {% csrf_token %}
+                        <div class="modal-header">
+                            <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+                            <h4 class="modal-title" id="cancelSubscriptionModalLabel">{% trans "Cancel Subscription" %}</h4>
+                        </div>
+                        <div class="modal-body">
+                            <p>
+                                {% blocktrans with plan_name=subscription.tier_version.tier.name %}
+                                    Are you sure you want to cancel your <strong>{{ plan_name }}</strong> subscription?
+                                {% endblocktrans %}
+                            </p>
+                            {% if subscription.ends_at %}
+                                <p class="text-muted">
+                                    {% blocktrans with end_date=subscription.ends_at|date:"SHORT_DATE_FORMAT" %}
+                                        Your subscription will remain active until the end of your current billing period on <strong>{{ end_date }}</strong>. After this date, your account will be downgraded to the Free plan.
+                                    {% endblocktrans %}
+                                </p>
+                            {% else %}
+                                <p class="text-muted">
+                                    {% trans "Your subscription will be cancelled and your account will immediately be downgraded to the Free plan." %}
+                                </p>
+                            {% endif %}
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-default" data-dismiss="modal">{% trans "Keep Subscription" %}</button>
+                            <button type="submit" class="btn btn-danger">{% trans "Confirm Cancellation" %}</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    {% endif %}
 
 {% endblock %}

@@ -32,6 +32,14 @@
             {% bootstrap_field form.display_order layout='control' %}
         </fieldset>
 
+        {% if version_form %}
+        <fieldset>
+            <legend>{% trans "Version Settings" %}</legend>
+            {% bootstrap_form_errors version_form %}
+            {% bootstrap_field version_form.grace_period_days layout='control' %}
+        </fieldset>
+        {% endif %}
+
         {% if price_formset %}
         <fieldset>
             <legend>{% trans "Prices" %}</legend>

@@ -130,6 +130,11 @@ urlpatterns = [
         name="organizer.plan.upgrade",
     ),
     path(
+        "control/organizer/<str:organizer>/business/plan/cancel/",
+        views.OrganizerPlanCancelView.as_view(),
+        name="organizer.plan.cancel",
+    ),
+    path(
         "control/organizer/<str:organizer>/business/plan/cancel-downgrade/",
         views.OrganizerPlanCancelDowngradeView.as_view(),
         name="organizer.plan.cancel_downgrade",

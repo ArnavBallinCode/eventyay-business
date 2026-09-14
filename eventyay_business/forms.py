@@ -32,9 +32,40 @@ class TierForm(forms.ModelForm):
 
 
 class TierVersionForm(forms.ModelForm):
+    grace_period_days = forms.IntegerField(
+        label=_("Grace period (days)"),
+        required=False,
+        min_value=0,
+        help_text=_(
+            "Override the grace period duration in days for subscriptions on this tier version. "
+            "Leave empty to use global default."
+        ),
+    )
+
     class Meta:
         model = TierVersion
-        fields = []  # No fields editable directly on version in this form
+        fields = []  # No model fields editable directly on version in this form
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk and self.instance.configuration_snapshot:
+            val = self.instance.configuration_snapshot.get("grace_period_days")
+            if val is not None:
+                self.fields["grace_period_days"].initial = val
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        snapshot = dict(instance.configuration_snapshot or {})
+        grace_days = self.cleaned_data.get("grace_period_days")
+        if grace_days is not None:
+            snapshot["grace_period_days"] = grace_days
+        else:
+            snapshot.pop("grace_period_days", None)
+        instance.configuration_snapshot = snapshot
+        if commit:
+            instance.save()
+            self.save_m2m()
+        return instance
 
 
 class TierEntitlementForm(forms.ModelForm):
@@ -162,6 +193,16 @@ TierEntitlementFormSet = inlineformset_factory(
 
 
 class SubscriptionAdminForm(forms.ModelForm):
+    grace_period_days = forms.IntegerField(
+        label=_("Grace period (days)"),
+        required=False,
+        min_value=0,
+        help_text=_(
+            "Override the grace period duration in days for this subscription. "
+            "Leave empty to use tier version or global default."
+        ),
+    )
+
     class Meta:
         model = Subscription
         fields = [
@@ -187,6 +228,13 @@ class SubscriptionAdminForm(forms.ModelForm):
             "cancel_at": SplitDateTimePickerWidget(),
         }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk and self.instance.configuration_snapshot:
+            val = self.instance.configuration_snapshot.get("grace_period_days")
+            if val is not None:
+                self.fields["grace_period_days"].initial = val
+
     def clean(self):
         cleaned_data = super().clean()
         organizer = cleaned_data.get("organizer")
@@ -208,6 +256,20 @@ class SubscriptionAdminForm(forms.ModelForm):
                     _("This organizer already has an active or pending subscription.")
                 )
         return cleaned_data
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        snapshot = dict(instance.configuration_snapshot or {})
+        grace_days = self.cleaned_data.get("grace_period_days")
+        if grace_days is not None:
+            snapshot["grace_period_days"] = grace_days
+        else:
+            snapshot.pop("grace_period_days", None)
+        instance.configuration_snapshot = snapshot
+        if commit:
+            instance.save()
+            self.save_m2m()
+        return instance
 
 
 class AddonDefinitionForm(forms.ModelForm):

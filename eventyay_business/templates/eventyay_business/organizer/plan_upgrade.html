@@ -88,9 +88,33 @@
                                 </form>
                             {% endfor %}
                         {% else %}
-                            <p class="text-muted text-center" style="margin: 5px 0;">
-                                {% trans "No pricing options available." %}
-                            </p>
+                            {% if item.is_current %}
+                                <button type="button" class="btn btn-default btn-sm btn-block" disabled>
+                                    {% trans "Current" %}
+                                </button>
+                            {% elif item.tier.slug == "free" or item.tier.display_order == 0 %}
+                                <form method="post" action="{% url 'plugins:eventyay_business:organizer.plan.upgrade' organizer=request.organizer.slug %}" style="margin-bottom: 8px;">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="tier_version_id" value="{{ item.version.id }}">
+                                    <div class="row" style="align-items: center; display: flex;">
+                                        <div class="col-xs-7">
+                                            <strong>{% trans "Free" %}</strong>
+                                            <div class="text-muted" style="font-size: 11px;">
+                                                {% trans "Always free" %}
+                                            </div>
+                                        </div>
+                                        <div class="col-xs-5 text-right">
+                                            <button type="submit" class="btn btn-success btn-sm btn-block">
+                                                <i class="fa fa-arrow-down"></i> {% trans "Downgrade to Free" %}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </form>
+                            {% else %}
+                                <p class="text-muted text-center" style="margin: 5px 0;">
+                                    {% trans "No pricing options available." %}
+                                </p>
+                            {% endif %}
                         {% endif %}
                     </div>
                 </div>
