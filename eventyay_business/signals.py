@@ -77,13 +77,22 @@ if nav_global:
 
         return [
             {
+                "label": _("Business Settings"),
+                "url": reverse("plugins:eventyay_business:settings"),
+                "active": (
+                    url.namespace == "plugins:eventyay_business"
+                    and url.url_name == "settings"
+                ),
+                "parent": reverse("eventyay_admin:admin.vouchers"),
+            },
+            {
                 "label": _("Tiers"),
                 "url": reverse("plugins:eventyay_business:tiers.list"),
                 "active": (
                     url.namespace == "plugins:eventyay_business"
                     and url.url_name.startswith("tiers.")
                 ),
-                "parent": reverse("eventyay_admin:admin.global.business"),
+                "parent": reverse("eventyay_admin:admin.vouchers"),
             },
             {
                 "label": _("Subscriptions"),
@@ -92,7 +101,7 @@ if nav_global:
                     url.namespace == "plugins:eventyay_business"
                     and url.url_name.startswith("subscriptions.")
                 ),
-                "parent": reverse("eventyay_admin:admin.global.business"),
+                "parent": reverse("eventyay_admin:admin.vouchers"),
             },
             {
                 "label": _("Add-ons"),
@@ -101,7 +110,7 @@ if nav_global:
                     url.namespace == "plugins:eventyay_business"
                     and url.url_name.startswith("addons.")
                 ),
-                "parent": reverse("eventyay_admin:admin.global.business"),
+                "parent": reverse("eventyay_admin:admin.vouchers"),
             },
             {
                 "label": _("Invoices"),
@@ -110,7 +119,7 @@ if nav_global:
                     url.namespace == "plugins:eventyay_business"
                     and url.url_name.startswith("invoices.")
                 ),
-                "parent": reverse("eventyay_admin:admin.global.business"),
+                "parent": reverse("eventyay_admin:admin.vouchers"),
             },
         ]
 
@@ -519,38 +528,7 @@ if order_paid:
             Decimal("0.01")
         )
 
-        # When max_fee comes from global settings it is in the platform base currency (USD).
-        # Convert it to event.currency before comparing against fee_amount (which is in event.currency).
-        # Country overrides (is_override=True) are stored in the override's own currency, which
-        # must already match the event currency, so no conversion is needed for that path.
         effective_max_fee = max_fee
-        if not is_override and max_fee and max_fee > Decimal("0.00"):
-            from django.conf import settings as django_settings
-
-            platform_currency = getattr(django_settings, "DEFAULT_CURRENCY", "USD")
-            if platform_currency != event.currency:
-                from eventyay.base.settings import GlobalSettingsObject
-
-                gs_cap = GlobalSettingsObject()
-                rates_dict = gs_cap.settings.get("ecb_rates_dict", as_type=dict) or {}
-                if platform_currency in rates_dict and event.currency in rates_dict:
-                    from decimal import ROUND_HALF_UP
-
-                    rate = (
-                        Decimal(str(rates_dict[event.currency]))
-                        / Decimal(str(rates_dict[platform_currency]))
-                    ).quantize(Decimal("0.0001"), ROUND_HALF_UP)
-                    effective_max_fee = (max_fee * rate).quantize(
-                        Decimal("0.01"), ROUND_HALF_UP
-                    )
-                else:
-                    logger.warning(
-                        "Exchange rate unavailable for converting global max_fee from %s to %s for order %s. Skipping cap.",
-                        platform_currency,
-                        event.currency,
-                        order.code,
-                    )
-                    effective_max_fee = Decimal("0.00")
 
         if (
             effective_max_fee
@@ -620,3 +598,10 @@ if order_paid:
             )
         except IntegrityError:
             pass
+
+from eventyay.base.signals import register_global_settings
+
+@receiver(register_global_settings, dispatch_uid='business_global_settings')
+def register_business_global_settings(sender, **kwargs):
+    from .settings import get_business_settings_fields
+    return get_business_settings_fields()

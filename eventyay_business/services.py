@@ -340,16 +340,7 @@ def resolve_fee_settings(
         if ent:
             fee_percent = ent.get_typed_value()
 
-    # 3. Fallback to Global Settings
+    # 3. Fallback: No fee
     max_fee = Decimal("0.00")
-    from eventyay.base.settings import GlobalSettingsObject
 
-    gs = GlobalSettingsObject()
-    if fee_percent is None:
-        pct = gs.settings.get("ticket_fee_percentage", as_type=Decimal)
-        fee_percent = pct if pct is not None else Decimal("2.50")
-    global_max = gs.settings.get("ticket_fee_maximum", as_type=Decimal)
-    if global_max is not None:
-        max_fee = global_max
-
-    return (fee_percent or Decimal("0.00"), max_fee or Decimal("0.00"), False)
+    return (fee_percent or Decimal("0.00"), max_fee, False)
