@@ -298,7 +298,7 @@ def resolve_fee_settings(
     Hierarchy:
     1. CountryFeeSetting matching (country, currency)
     2. Tier entitlement 'commerce.platform_fee_percent' (if tier_version available)
-    3. Global settings: 'ticket_fee_percentage' and 'ticket_fee_maximum'
+    3. Fallback: explicit zero fee and zero maximum
 
     Returns:
         tuple: (service_fee_percent: Decimal, maximum_fee: Decimal, is_override: bool)

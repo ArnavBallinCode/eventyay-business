@@ -2079,21 +2079,25 @@ class CountryFeeSettingDeleteView(AdministratorPermissionRequiredMixin, DeleteVi
         messages.success(self.request, _("Country fee setting deleted successfully."))
         return super().form_valid(form)
 
+
 class GlobalBusinessSettingsView(AdministratorPermissionRequiredMixin, FormView):
-    template_name = 'eventyay_business/admin/business_settings.html'
+    template_name = "eventyay_business/admin/business_settings.html"
 
     def get_form_class(self):
         from .forms import GlobalBusinessSettingsForm
+
         return GlobalBusinessSettingsForm
 
     def form_valid(self, form):
         form.save()
-        messages.success(self.request, _('Your changes have been saved.'))
+        messages.success(self.request, _("Your changes have been saved."))
         return super().form_valid(form)
 
     def form_invalid(self, form):
-        messages.error(self.request, _('Your changes have not been saved, see below for errors.'))
+        messages.error(
+            self.request, _("Your changes have not been saved, see below for errors.")
+        )
         return super().form_invalid(form)
 
     def get_success_url(self):
-        return reverse('plugins:eventyay_business:settings')
+        return reverse("plugins:eventyay_business:settings")

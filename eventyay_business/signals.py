@@ -161,9 +161,6 @@ def auto_assign_free_tier(sender, instance, created, **kwargs):
             "status": TierStatus.PUBLISHED,
         },
     )
-    if free_tier.status == TierStatus.DRAFT:
-        free_tier.status = TierStatus.PUBLISHED
-        free_tier.save(update_fields=["status"])
 
     latest_version = (
         free_tier.versions.filter(published_at__isnull=False)
@@ -598,10 +595,3 @@ if order_paid:
             )
         except IntegrityError:
             pass
-
-from eventyay.base.signals import register_global_settings
-
-@receiver(register_global_settings, dispatch_uid='business_global_settings')
-def register_business_global_settings(sender, **kwargs):
-    from .settings import get_business_settings_fields
-    return get_business_settings_fields()
