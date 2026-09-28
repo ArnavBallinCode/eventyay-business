@@ -101,9 +101,9 @@ def test_business_tiers_nav_staff_on_admin_page():
     assert str(items[4]["label"]) == "Invoices"
     assert items[0]["active"] is False
     assert items[1]["active"] is False
-    assert items[1]["active"] is False
     assert items[2]["active"] is False
     assert items[3]["active"] is False
+    assert items[4]["active"] is False
 
 
 def test_business_tiers_nav_staff_on_tiers_list():
@@ -124,9 +124,9 @@ def test_business_tiers_nav_staff_on_tiers_list():
     assert len(items) == 5
     assert items[0]["active"] is False
     assert items[1]["active"] is True
-    assert items[1]["active"] is False
     assert items[2]["active"] is False
     assert items[3]["active"] is False
+    assert items[4]["active"] is False
 
 
 def test_business_tiers_nav_staff_on_addons_list():
@@ -147,9 +147,9 @@ def test_business_tiers_nav_staff_on_addons_list():
     assert len(items) == 5
     assert items[0]["active"] is False
     assert items[1]["active"] is False
-    assert items[1]["active"] is False
-    assert items[2]["active"] is True
-    assert items[3]["active"] is False
+    assert items[2]["active"] is False
+    assert items[3]["active"] is True
+    assert items[4]["active"] is False
 
 
 def test_business_tiers_nav_staff_on_invoices_list():
@@ -170,9 +170,9 @@ def test_business_tiers_nav_staff_on_invoices_list():
     assert len(items) == 5
     assert items[0]["active"] is False
     assert items[1]["active"] is False
-    assert items[1]["active"] is False
     assert items[2]["active"] is False
-    assert items[3]["active"] is True
+    assert items[3]["active"] is False
+    assert items[4]["active"] is True
 
 
 def test_business_event_addons_nav_anonymous():
@@ -231,7 +231,6 @@ def test_business_event_addons_nav_with_permission():
     assert len(items) == 1
     assert str(items[0]["label"]) == "Add-ons & Modules"
     assert items[0]["active"] is False
-    assert items[1]["active"] is False
     assert "test-org" in items[0]["url"]
     assert "test-event" in items[0]["url"]
 
@@ -254,5 +253,4 @@ def test_business_event_addons_nav_active():
     )
     items = business_event_addons_nav(sender=request.event, request=request)
     assert len(items) == 1
-    assert items[0]["active"] is False
-    assert items[1]["active"] is True
+    assert items[0]["active"] is True
