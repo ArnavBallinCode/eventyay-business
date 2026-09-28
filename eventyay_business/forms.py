@@ -846,7 +846,7 @@ class CountryFeeSettingForm(forms.ModelForm):
 
 from collections import OrderedDict
 from eventyay.base.forms import SecretKeySettingsField, SettingsForm
-from eventyay.control.forms.ext import StripeKeyValidator
+from eventyay.control.forms.global_settings import StripeKeyValidator
 
 
 class GlobalBusinessSettingsForm(SettingsForm):
