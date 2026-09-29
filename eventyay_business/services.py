@@ -1,7 +1,12 @@
 import logging
+from decimal import Decimal
+from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import IntegrityError, transaction
 from django.utils.timezone import now
+from eventyay.base.settings import GlobalSettingsObject
+
+from .models import CountryFeeSetting
 
 logger = logging.getLogger(__name__)
 
@@ -241,8 +246,6 @@ def get_grace_period_days(subscription=None) -> int:
             except (ValueError, TypeError):
                 pass
 
-    from django.conf import settings
-
     val = getattr(settings, "EVENTYAY_BUSINESS_GRACE_PERIOD_DAYS", None)
     if val is not None:
         try:
@@ -251,8 +254,6 @@ def get_grace_period_days(subscription=None) -> int:
             pass
 
     try:
-        from eventyay.base.settings import GlobalSettingsObject
-
         gs = GlobalSettingsObject()
         gs_val = gs.settings.get("business_grace_period_days", as_type=int)
         if gs_val is not None:
@@ -303,10 +304,6 @@ def resolve_fee_settings(
     Returns:
         tuple: (service_fee_percent: Decimal, maximum_fee: Decimal, is_override: bool)
     """
-    from decimal import Decimal
-
-    from .models import CountryFeeSetting
-
     if not currency:
         if event and getattr(event, "currency", None):
             currency = event.currency

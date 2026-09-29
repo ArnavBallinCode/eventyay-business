@@ -1,6 +1,10 @@
+from collections import OrderedDict
 from django import forms
 from django.forms import inlineformset_factory
 from django.utils.translation import gettext_lazy as _
+from eventyay.base.forms import SecretKeySettingsField, SettingsForm
+from eventyay.base.settings import GlobalSettingsObject
+from eventyay.control.forms.global_settings import StripeKeyValidator
 
 from .capabilities import get_grouped_capability_choices
 from .models import (
@@ -844,15 +848,8 @@ class CountryFeeSettingForm(forms.ModelForm):
         return currency
 
 
-from collections import OrderedDict
-from eventyay.base.forms import SecretKeySettingsField, SettingsForm
-from eventyay.control.forms.global_settings import StripeKeyValidator
-
-
 class GlobalBusinessSettingsForm(SettingsForm):
     def __init__(self, *args, **kwargs):
-        from eventyay.base.settings import GlobalSettingsObject
-
         self.obj = GlobalSettingsObject()
         super().__init__(*args, obj=self.obj, **kwargs)
 

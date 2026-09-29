@@ -35,6 +35,7 @@ from .forms import (
     CountryFeeSettingForm,
     EventAddonForm,
     EventAddonPurchaseForm,
+    GlobalBusinessSettingsForm,
     OrganizerAddonForm,
     OrganizerAddonPurchaseForm,
     SubscriptionAdminForm,
@@ -2082,11 +2083,7 @@ class CountryFeeSettingDeleteView(AdministratorPermissionRequiredMixin, DeleteVi
 
 class GlobalBusinessSettingsView(AdministratorPermissionRequiredMixin, FormView):
     template_name = "eventyay_business/admin/business_settings.html"
-
-    def get_form_class(self):
-        from .forms import GlobalBusinessSettingsForm
-
-        return GlobalBusinessSettingsForm
+    form_class = GlobalBusinessSettingsForm
 
     def form_valid(self, form):
         form.save()
