@@ -1,8 +1,7 @@
-from decimal import Decimal
-from unittest.mock import MagicMock
-
 import pytest
+from decimal import Decimal
 from django.utils.timezone import now
+from unittest.mock import MagicMock
 
 from eventyay_business.models import (
     Subscription,
@@ -112,7 +111,10 @@ def test_stripe_fee_collected_at_checkout_is_not_billed_again(
         [MagicMock(info_data={"application_fee_amount": collected_cents})]
     )
 
-    assert stripe_fees_collected_at_checkout(order, event) == Decimal(collected_cents) / 100
+    assert (
+        stripe_fees_collected_at_checkout(order, event)
+        == Decimal(collected_cents) / 100
+    )
     payments.__iter__.return_value = iter(
         [MagicMock(info_data={"application_fee_amount": collected_cents})]
     )

@@ -1,6 +1,5 @@
 import logging
 from decimal import Decimal
-
 from django.conf import settings
 from django.db import IntegrityError
 from django.db.models import Q, Sum
@@ -8,9 +7,7 @@ from django.dispatch import Signal, receiver
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from django_scopes import scope
-
 from eventyay.base.models import OrderPayment
-
 
 logger = logging.getLogger(__name__)
 
