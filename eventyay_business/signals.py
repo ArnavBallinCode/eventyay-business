@@ -1,10 +1,12 @@
+import datetime
 import logging
 from decimal import Decimal
 from django.conf import settings
-from django.db import IntegrityError
+from django.db import DatabaseError, IntegrityError
 from django.db.models import Q, Sum
 from django.dispatch import Signal, receiver
 from django.urls import reverse
+from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
 from django_scopes import scope
 from eventyay.base.models import OrderPayment
@@ -17,6 +19,39 @@ addon_purchased = Signal()
 subscription_purchased = Signal()
 subscription_downgraded = Signal()
 subscription_expired = Signal()
+
+
+def _resolve_payment_date(*, order, payment=None, payment_date=None):
+    if not isinstance(payment_date, (datetime.date, datetime.datetime)):
+        payment_date = None
+
+    if not payment_date:
+        candidate = getattr(payment, "payment_date", None)
+        if isinstance(candidate, (datetime.date, datetime.datetime)):
+            payment_date = candidate
+
+    if not payment_date and hasattr(order, "payments"):
+        try:
+            confirmed_payment = (
+                order.payments.filter(state="confirmed")
+                .order_by("-payment_date")
+                .first()
+            )
+            candidate = getattr(confirmed_payment, "payment_date", None)
+            if isinstance(candidate, (datetime.date, datetime.datetime)):
+                payment_date = candidate
+        except (AttributeError, DatabaseError):
+            pass
+
+    if not payment_date:
+        candidate = getattr(order, "datetime", None)
+        if isinstance(candidate, (datetime.date, datetime.datetime)):
+            payment_date = candidate
+        else:
+            payment_date = now()
+
+    return payment_date
+
 
 try:
     from eventyay.control.signals import (
@@ -35,6 +70,13 @@ except ImportError:
     EntitlementDecision = None
 
 try:
+    from eventyay.base.platform_fees import PlatformFeePolicy
+    from eventyay.base.signals import platform_fee_policy
+except ImportError:
+    PlatformFeePolicy = None
+    platform_fee_policy = None
+
+try:
     from eventyay.base.signals import (
         entitlement_check,
         entitlement_usage_recorded,
@@ -46,6 +88,41 @@ except ImportError:
     entitlement_check = None
     entitlement_usage_recorded = None
     order_paid = None
+
+
+if platform_fee_policy and PlatformFeePolicy:
+
+    @receiver(platform_fee_policy, dispatch_uid="business_platform_fee_policy")
+    def provide_platform_fee_policy(sender, order, payment, **kwargs):
+        from .models import Subscription
+        from .services import resolve_fee_settings
+
+        payment_date = _resolve_payment_date(
+            order=order,
+            payment=payment,
+            payment_date=kwargs.get("payment_date"),
+        )
+        subscription = (
+            Subscription.objects.filter(
+                organizer=sender.organizer,
+                status="active",
+                starts_at__lte=payment_date,
+            )
+            .exclude(ends_at__lt=payment_date)
+            .select_related("tier_version")
+            .first()
+        )
+        fee_percent, maximum_fee, is_override = resolve_fee_settings(
+            event=sender,
+            order=order,
+            tier_version=subscription.tier_version if subscription else None,
+        )
+        return PlatformFeePolicy(
+            percentage=fee_percent,
+            maximum_fee=maximum_fee,
+            is_override=is_override,
+            source="eventyay-business",
+        )
 
 
 def stripe_fees_collected_at_checkout(order, event) -> Decimal:
@@ -156,7 +233,6 @@ if register_entitlements:
 
 
 from django.db.models.signals import post_save
-from django.utils.timezone import now
 from eventyay.base.models import Organizer
 
 
@@ -469,44 +545,17 @@ if order_paid:
     @receiver(order_paid, dispatch_uid="business_order_paid_fee")
     def record_platform_fee_on_order_paid(sender, order, **kwargs):
         from decimal import Decimal
-        from django.utils.timezone import now
 
         from .models import Subscription, UsageRecord
 
         event = sender
         organizer = event.organizer
 
-        import datetime
-
-        payment_date = kwargs.get("payment_date")
-        if not isinstance(payment_date, (datetime.date, datetime.datetime)):
-            payment_date = None
-
-        if not payment_date:
-            payment = kwargs.get("payment")
-            cand = getattr(payment, "payment_date", None)
-            if isinstance(cand, (datetime.date, datetime.datetime)):
-                payment_date = cand
-
-        if not payment_date and hasattr(order, "payments"):
-            try:
-                confirmed_payment = (
-                    order.payments.filter(state="confirmed")
-                    .order_by("-payment_date")
-                    .first()
-                )
-                cand = getattr(confirmed_payment, "payment_date", None)
-                if isinstance(cand, (datetime.date, datetime.datetime)):
-                    payment_date = cand
-            except Exception:
-                pass
-
-        if not payment_date:
-            cand = getattr(order, "datetime", None)
-            if isinstance(cand, (datetime.date, datetime.datetime)):
-                payment_date = cand
-            else:
-                payment_date = now()
+        payment_date = _resolve_payment_date(
+            order=order,
+            payment=kwargs.get("payment"),
+            payment_date=kwargs.get("payment_date"),
+        )
 
         sub = (
             Subscription.objects.filter(
