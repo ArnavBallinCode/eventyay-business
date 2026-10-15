@@ -1,4 +1,8 @@
 from dataclasses import dataclass
+from django.core.exceptions import ValidationError
+from django.db import transaction
+from django.utils.timezone import now
+from eventyay.base.models import Organizer
 from eventyay.base.models.organizer import OrganizerBillingModel
 
 from .models import (
@@ -9,6 +13,7 @@ from .models import (
     Subscription,
     SubscriptionStatus,
 )
+from .platform_fee_ledger import BILLING_CUTOVER_SETTING
 
 
 @dataclass(frozen=True)
@@ -78,3 +83,16 @@ def consolidated_billing_preflight(organizer) -> ConsolidatedBillingPreflight:
         collection_authorized=authorization_exists,
         active_stripe_subscription_ids=tuple(sorted(subscription_ids)),
     )
+
+
+@transaction.atomic
+def enable_consolidated_billing(organizer):
+    """Record cutover only after rechecking readiness under a row lock."""
+    organizer = Organizer.objects.select_for_update().get(pk=organizer.pk)
+    if organizer.settings.get(BILLING_CUTOVER_SETTING, as_type=str):
+        return organizer
+    preflight = consolidated_billing_preflight(organizer)
+    if not preflight.ready:
+        raise ValidationError("Organizer is not ready for consolidated billing.")
+    organizer.settings.set(BILLING_CUTOVER_SETTING, now().isoformat())
+    return organizer
