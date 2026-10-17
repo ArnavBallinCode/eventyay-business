@@ -8,7 +8,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q, Sum
 from django.http import HttpResponse
-from django.shortcuts import get_object_or_404, redirect
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
@@ -23,6 +23,7 @@ from django.views.generic import (
     UpdateView,
     View,
 )
+from django_scopes import scope
 from eventyay.base.models import Event, Organizer, User
 from eventyay.base.models.organizer import OrganizerBillingModel
 from eventyay.control.permissions import (
@@ -91,7 +92,9 @@ from .services import (
     migrate_tier_subscribers,
 )
 from .signals import (
+    AUTOMATIC_COLLECTION_TERMS_VERSION,
     addon_canceled,
+    organizer_billing_payment_method_saved,
     subscription_downgraded,
     subscription_purchased,
 )
@@ -2012,6 +2015,9 @@ class OrganizerCurrentChargesView(
         ctx = super().get_context_data(**kwargs)
         ctx["organizer"] = self.request.organizer
         ctx.update(build_organizer_billing_overview(self.request.organizer))
+        ctx["automatic_payment_save_supported"] = bool(
+            organizer_billing_payment_method_saved
+        )
         return ctx
 
 
@@ -2054,6 +2060,7 @@ class OrganizerBillingAuthorizationView(
                         "authorized_at": now(),
                         "authorized_by": request.user,
                         "revoked_at": None,
+                        "terms_version": AUTOMATIC_COLLECTION_TERMS_VERSION,
                     },
                 )
             messages.success(request, _("Automatic invoice collection is authorized."))
@@ -2068,6 +2075,49 @@ class OrganizerBillingAuthorizationRevokeView(
 ):
     permission = "can_change_organizer_settings"
 
+    def get(self, request, *args, **kwargs):
+        authorization = BillingCollectionAuthorization.objects.filter(
+            organizer=request.organizer, revoked_at__isnull=True
+        ).first()
+        if not authorization:
+            messages.info(request, _("Automatic payments are already off."))
+            return redirect(
+                "plugins:eventyay_business:organizer.current_charges",
+                organizer=request.organizer.slug,
+            )
+
+        subscription = (
+            Subscription.objects.filter(
+                organizer=request.organizer,
+                status__in=(SubscriptionStatus.ACTIVE, SubscriptionStatus.PAST_DUE),
+            )
+            .select_related("tier_version__tier")
+            .first()
+        )
+        organizer_addons = OrganizerAddon.objects.filter(
+            organizer=request.organizer,
+            status__in=(AddonStatus.ACTIVE, AddonStatus.PAST_DUE),
+        ).select_related("addon")
+        event_addons = []
+        for event in request.organizer.events.all():
+            with scope(event=event):
+                event_addons.extend(
+                    EventAddon.objects.filter(
+                        event=event,
+                        status__in=(AddonStatus.ACTIVE, AddonStatus.PAST_DUE),
+                    ).select_related("addon", "event")
+                )
+        return render(
+            request,
+            "eventyay_business/billing/automatic_payment_cancel.html",
+            {
+                "organizer": request.organizer,
+                "subscription": subscription,
+                "organizer_addons": organizer_addons,
+                "event_addons": event_addons,
+            },
+        )
+
     def post(self, request, *args, **kwargs):
         with transaction.atomic():
             organizer = Organizer.objects.select_for_update().get(
@@ -2077,7 +2127,10 @@ class OrganizerBillingAuthorizationRevokeView(
                 organizer=organizer, revoked_at__isnull=True
             ).update(revoked_at=now())
         messages.success(
-            request, _("Automatic invoice collection authorization was revoked.")
+            request,
+            _(
+                "Automatic payments are off. Your subscriptions remain active and invoices still become due."
+            ),
         )
         return redirect(
             "plugins:eventyay_business:organizer.current_charges",
