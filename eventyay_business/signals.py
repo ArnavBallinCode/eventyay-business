@@ -176,6 +176,18 @@ def record_automatic_collection_authorization(
                 "terms_version": AUTOMATIC_COLLECTION_TERMS_VERSION,
             },
         )
+        from .tasks import retry_outstanding_business_invoices_task
+
+        def retry_outstanding_invoices(organizer_id=organizer.pk):
+            delay = getattr(retry_outstanding_business_invoices_task, "delay", None)
+            if delay:
+                return delay(organizer_id)
+            return retry_outstanding_business_invoices_task(organizer_id)
+
+        transaction.on_commit(
+            retry_outstanding_invoices,
+            robust=True,
+        )
     return authorization
 
 
@@ -408,11 +420,15 @@ if entitlement_check and EntitlementDecision:
 
         from .models import AddonStatus, EventAddon, OrganizerAddon
 
+        addon_statuses = [AddonStatus.ACTIVE]
+        if sub and sub.status == SubscriptionStatus.PAST_DUE:
+            addon_statuses.append(AddonStatus.PAST_DUE)
+
         active_org_addons = list(
             OrganizerAddon.objects.filter(
                 organizer=organizer,
                 addon__active=True,
-                status=AddonStatus.ACTIVE,
+                status__in=addon_statuses,
                 starts_at__lte=current_time,
             )
             .filter(
@@ -430,7 +446,7 @@ if entitlement_check and EntitlementDecision:
                 EventAddon.objects.filter(
                     event=event,
                     addon__active=True,
-                    status=AddonStatus.ACTIVE,
+                    status__in=addon_statuses,
                     starts_at__lte=current_time,
                 )
                 .filter(
