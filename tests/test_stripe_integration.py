@@ -1,4 +1,5 @@
 import pytest
+import stripe
 from datetime import timedelta
 from decimal import Decimal
 from django.core.exceptions import ValidationError
@@ -299,6 +300,86 @@ def test_create_subscription_checkout_session(setup_data):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("setup_intent_data", "modify_fails", "expected_modify"),
+    [
+        ({"status": "succeeded", "payment_method": "pm_saved"}, False, True),
+        (None, False, False),
+        ({"status": "succeeded", "payment_method": "pm_checkout"}, False, False),
+        ({"status": "succeeded", "payment_method": "pm_saved"}, True, True),
+    ],
+)
+def test_subscription_checkout_handles_saved_payment_method_redisplay(
+    setup_data, setup_intent_data, modify_fails, expected_modify
+):
+    organizer, _, user, _, _, tier_price, _, _, _ = setup_data
+    OrganizerBillingModel.objects.create(
+        organizer=organizer,
+        primary_contact_name="Stripe Organizer",
+        primary_contact_email="billing@example.com",
+        company_or_organization_name="Stripe Org",
+        address_line_1="Example Street 1",
+        address_line_2="",
+        city="Berlin",
+        zip_code="10115",
+        country="DE",
+        preferred_language="en",
+        tax_id="",
+        stripe_customer_id="cus_123",
+        stripe_payment_method_id="pm_saved",
+        stripe_setup_intent_id="seti_saved" if setup_intent_data else "",
+    )
+
+    modify_error = (
+        stripe.error.APIError("Stripe is temporarily unavailable")
+        if modify_fails
+        else None
+    )
+    with (
+        patch(
+            "eventyay_business.stripe_service.get_stripe_secret_key_safe",
+            return_value="sk_test_123",
+        ),
+        patch(
+            "eventyay_business.stripe_service.get_or_create_stripe_customer",
+            return_value="cus_123",
+        ),
+        patch(
+            "stripe.SetupIntent.retrieve", return_value=setup_intent_data
+        ) as retrieve_setup_intent,
+        patch(
+            "stripe.PaymentMethod.modify", side_effect=modify_error
+        ) as modify_payment_method,
+        patch(
+            "stripe.checkout.Session.create",
+            return_value=MagicMock(
+                url="https://checkout.stripe.com/c/pay/cs_saved_card"
+            ),
+        ) as create_session,
+    ):
+        url = create_subscription_checkout_session(
+            organizer=organizer,
+            tier_price=tier_price,
+            user=user,
+        )
+
+    assert url == "https://checkout.stripe.com/c/pay/cs_saved_card"
+    if setup_intent_data:
+        retrieve_setup_intent.assert_called_once_with("seti_saved")
+    else:
+        retrieve_setup_intent.assert_not_called()
+    if expected_modify:
+        modify_payment_method.assert_called_once_with(
+            "pm_saved",
+            allow_redisplay="always",
+        )
+    else:
+        modify_payment_method.assert_not_called()
+    assert create_session.call_args.kwargs["customer"] == "cus_123"
+    create_session.assert_called_once()
+
+
+@pytest.mark.django_db
 def test_legacy_checkout_sessions_are_blocked_after_cutover(setup_data):
     organizer, _, user, _, _, tier_price, recurring_addon, _, _ = setup_data
     organizer.settings.set(BILLING_CUTOVER_SETTING, now().isoformat())
@@ -386,10 +467,13 @@ def test_post_cutover_subscription_webhooks_cancel_legacy_subscriptions(setup_da
         },
     }
 
-    with patch(
-        "eventyay_business.stripe_service.get_stripe_secret_key_safe",
-        return_value="sk_test_cutover",
-    ), patch("stripe.Subscription.cancel") as cancel_subscription:
+    with (
+        patch(
+            "eventyay_business.stripe_service.get_stripe_secret_key_safe",
+            return_value="sk_test_cutover",
+        ),
+        patch("stripe.Subscription.cancel") as cancel_subscription,
+    ):
         assert process_webhook_event("checkout.session.completed", plan_session) is None
         assert (
             process_webhook_event("checkout.session.completed", addon_session) is None
@@ -442,10 +526,13 @@ def test_webhook_process_addon_checkout_completed(setup_data):
                 "user_id": str(user.pk),
             },
         }
-        with patch(
-            "eventyay_business.stripe_service.get_stripe_secret_key_safe",
-            return_value="sk_test_automatic",
-        ), patch("stripe.StripeClient", return_value=stripe_client):
+        with (
+            patch(
+                "eventyay_business.stripe_service.get_stripe_secret_key_safe",
+                return_value="sk_test_automatic",
+            ),
+            patch("stripe.StripeClient", return_value=stripe_client),
+        ):
             res = process_webhook_event("checkout.session.completed", session_data_org)
         assert isinstance(res, OrganizerAddon)
         assert res.status == AddonStatus.ACTIVE
@@ -491,12 +578,15 @@ def test_webhook_process_addon_checkout_completed(setup_data):
                 "user_id": str(user.pk),
             },
         }
-        with patch(
-            "eventyay_business.stripe_service.sync_checkout_payment_method",
-            return_value=None,
-        ), patch(
-            "eventyay_business.stripe_service.record_automatic_collection_authorization"
-        ) as record_authorization:
+        with (
+            patch(
+                "eventyay_business.stripe_service.sync_checkout_payment_method",
+                return_value=None,
+            ),
+            patch(
+                "eventyay_business.stripe_service.record_automatic_collection_authorization"
+            ) as record_authorization,
+        ):
             res_ea = process_webhook_event(
                 "checkout.session.completed", session_data_event
             )
@@ -553,10 +643,13 @@ def test_webhook_process_subscription_checkout_completed(setup_data):
                 }
             },
         )
-        with patch(
-            "eventyay_business.stripe_service.get_stripe_secret_key_safe",
-            return_value="sk_test_automatic",
-        ), patch("stripe.StripeClient", return_value=stripe_client):
+        with (
+            patch(
+                "eventyay_business.stripe_service.get_stripe_secret_key_safe",
+                return_value="sk_test_automatic",
+            ),
+            patch("stripe.StripeClient", return_value=stripe_client),
+        ):
             sub = process_webhook_event("checkout.session.completed", session_data)
         assert isinstance(sub, Subscription)
         assert sub.status == SubscriptionStatus.ACTIVE
@@ -592,14 +685,18 @@ def test_webhook_process_subscription_checkout_completed(setup_data):
             "subscription": "sub_without_payment_method",
             "invoice": "in_without_payment_method",
         }
-        with patch(
-            "eventyay_business.stripe_service.sync_checkout_payment_method",
-            return_value=None,
-        ), patch(
-            "eventyay_business.stripe_service.record_automatic_collection_authorization"
-        ) as record_authorization, patch(
-            "eventyay_business.stripe_service.get_stripe_secret_key_safe",
-            return_value=None,
+        with (
+            patch(
+                "eventyay_business.stripe_service.sync_checkout_payment_method",
+                return_value=None,
+            ),
+            patch(
+                "eventyay_business.stripe_service.record_automatic_collection_authorization"
+            ) as record_authorization,
+            patch(
+                "eventyay_business.stripe_service.get_stripe_secret_key_safe",
+                return_value=None,
+            ),
         ):
             process_webhook_event(
                 "checkout.session.completed", session_without_payment_method
@@ -803,9 +900,10 @@ def test_sync_tier_price_to_stripe(setup_data):
         "eventyay_business.stripe_service.get_stripe_secret_key_safe",
         return_value="sk_test_123",
     ):
-        with patch("stripe.Product.create") as mock_prod, patch(
-            "stripe.Price.create"
-        ) as mock_price:
+        with (
+            patch("stripe.Product.create") as mock_prod,
+            patch("stripe.Price.create") as mock_price,
+        ):
             mock_prod.return_value = MagicMock(id="prod_tier_test_123")
             mock_price.return_value = MagicMock(id="price_tier_test_123")
 
@@ -832,9 +930,10 @@ def test_sync_addon_to_stripe(setup_data):
         "eventyay_business.stripe_service.get_stripe_secret_key_safe",
         return_value="sk_test_123",
     ):
-        with patch("stripe.Product.create") as mock_prod, patch(
-            "stripe.Price.create"
-        ) as mock_price:
+        with (
+            patch("stripe.Product.create") as mock_prod,
+            patch("stripe.Price.create") as mock_price,
+        ):
             mock_prod.return_value = MagicMock(id="prod_addon_test_123")
             mock_price.return_value = MagicMock(id="price_addon_test_123")
 
@@ -1030,11 +1129,12 @@ def test_organizer_plan_upgrade_view_flow(setup_data, admin_user, admin_client):
             assert resp.url == "https://checkout.stripe.com/c/pay/cs_tier_upgrade_123"
             mock_checkout.assert_called_once()
 
-    with patch(
-        "eventyay_business.views.is_stripe_configured", return_value=True
-    ), patch(
-        "eventyay_business.views.create_subscription_checkout_session",
-        side_effect=ValidationError("provider-internal-detail"),
+    with (
+        patch("eventyay_business.views.is_stripe_configured", return_value=True),
+        patch(
+            "eventyay_business.views.create_subscription_checkout_session",
+            side_effect=ValidationError("provider-internal-detail"),
+        ),
     ):
         resp = admin_client.post(
             upgrade_url,
@@ -1049,11 +1149,12 @@ def test_organizer_plan_upgrade_view_flow(setup_data, admin_user, admin_client):
     organizer.settings.set(BILLING_CUTOVER_SETTING, now().isoformat())
 
     # Consolidated billing requires a saved and authorized payment method.
-    with patch(
-        "eventyay_business.views.is_stripe_configured", return_value=True
-    ), patch(
-        "eventyay_business.views.create_subscription_checkout_session"
-    ) as mock_checkout:
+    with (
+        patch("eventyay_business.views.is_stripe_configured", return_value=True),
+        patch(
+            "eventyay_business.views.create_subscription_checkout_session"
+        ) as mock_checkout,
+    ):
         resp = admin_client.post(upgrade_url, {"tier_price_id": tier_price.id})
 
     assert resp.status_code == 302
