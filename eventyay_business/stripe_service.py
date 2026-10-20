@@ -6,6 +6,7 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils.timezone import now
+from eventyay.base.models.choices import PriceModeChoices
 from eventyay.base.models.organizer import OrganizerBillingModel
 
 from .invoice_collection import process_business_payment_intent
@@ -25,6 +26,7 @@ from .models import (
     SubscriptionStatus,
     TierPrice,
     TierVersion,
+    VoucherDiscountDuration,
 )
 from .platform_fee_ledger import organizer_consolidated_billing_enabled
 from .services import invalidate_entitlement_cache, log_addon_lifecycle_action
@@ -36,6 +38,15 @@ from .signals import (
     subscription_past_due,
     subscription_purchased,
     subscription_recovered,
+)
+from .vouchers import (
+    CHECKOUT_SESSION_EXPIRY,
+    VoucherQuote,
+    attach_checkout_session,
+    record_checkout_redemption,
+    release_checkout_reservation,
+    release_reservation,
+    reserve_checkout_voucher,
 )
 
 logger = logging.getLogger(__name__)
@@ -240,6 +251,77 @@ def sync_addon_to_stripe(addon: AddonDefinition) -> Optional[str]:
         return None
 
 
+def create_voucher_coupon(
+    quote: VoucherQuote, currency: str, interval_months: int | None
+) -> str:
+    """Create a single-use Stripe coupon carrying a voucher discount.
+
+    ``interval_months`` is the length of one billing period, or ``None`` for one-time payments.
+    """
+    voucher = quote.voucher
+    params = {
+        "name": f"Voucher {voucher.code}"[:40],
+        "max_redemptions": 1,
+        "metadata": {"invoice_voucher_id": str(voucher.pk)},
+    }
+    full_percent_discount = (
+        voucher.price_mode == PriceModeChoices.PERCENT
+        and quote.discount
+        == (quote.amount * voucher.value / Decimal("100")).quantize(Decimal("0.01"))
+    )
+    if full_percent_discount:
+        params["percent_off"] = float(voucher.value)
+    else:
+        params["amount_off"] = int(quote.discount * 100)
+        params["currency"] = currency.lower()
+
+    duration = quote.targets.duration
+    # Stripe renews coupons without knowing the voucher budget, so a budgeted voucher only
+    # discounts the first period.
+    if (
+        interval_months is None
+        or duration == VoucherDiscountDuration.ONCE
+        or voucher.budget is not None
+    ):
+        params["duration"] = "once"
+    elif duration == VoucherDiscountDuration.REPEATING:
+        params["duration"] = "repeating"
+        params["duration_in_months"] = quote.targets.period_limit * interval_months
+    else:
+        params["duration"] = "forever"
+    return stripe.Coupon.create(**params).id
+
+
+def create_checkout_session(
+    session_kwargs: dict,
+    organizer,
+    voucher_quote: VoucherQuote | None,
+    currency: str,
+    interval_months: int | None,
+):
+    """Create a Stripe Checkout session, reserving the voucher it is discounted with."""
+    if voucher_quote is None:
+        return stripe.checkout.Session.create(**session_kwargs)
+
+    # Reserving locks the voucher and re-checks it, so concurrent checkouts cannot use it
+    # more often than its redemption limit allows.
+    reservation = reserve_checkout_voucher(voucher_quote, organizer)
+    # The metadata dict is shared with subscription_data and payment_intent_data.
+    session_kwargs["metadata"]["invoice_voucher_id"] = str(voucher_quote.voucher.pk)
+    session_kwargs["metadata"]["voucher_reservation_id"] = str(reservation.pk)
+    session_kwargs["expires_at"] = int((now() + CHECKOUT_SESSION_EXPIRY).timestamp())
+    try:
+        session_kwargs["discounts"] = [
+            {"coupon": create_voucher_coupon(voucher_quote, currency, interval_months)}
+        ]
+        session = stripe.checkout.Session.create(**session_kwargs)
+    except stripe.StripeError:
+        release_reservation(reservation.pk)
+        raise
+    attach_checkout_session(reservation, session.id)
+    return session
+
+
 def create_addon_checkout_session(
     organizer,
     addon: AddonDefinition,
@@ -249,6 +331,7 @@ def create_addon_checkout_session(
     success_url: str = "",
     cancel_url: str = "",
     assignment=None,
+    voucher_quote: VoucherQuote | None = None,
 ) -> Optional[str]:
     """
     Create a Stripe Checkout Session for an add-on purchase and return the session URL.
@@ -322,7 +405,13 @@ def create_addon_checkout_session(
             "setup_future_usage": "off_session",
         }
 
-    session = stripe.checkout.Session.create(**session_kwargs)
+    session = create_checkout_session(
+        session_kwargs,
+        organizer,
+        voucher_quote,
+        currency,
+        interval_months=1 if mode == "subscription" else None,
+    )
     return session.url
 
 
@@ -429,6 +518,7 @@ def create_subscription_checkout_session(
     user,
     success_url: str = "",
     cancel_url: str = "",
+    voucher_quote: VoucherQuote | None = None,
 ) -> Optional[str]:
     """
     Create a Stripe Checkout Session for a Tier subscription and return the session URL.
@@ -522,7 +612,13 @@ def create_subscription_checkout_session(
     if customer_id:
         session_kwargs["customer"] = customer_id
 
-    session = stripe.checkout.Session.create(**session_kwargs)
+    session = create_checkout_session(
+        session_kwargs,
+        organizer,
+        voucher_quote,
+        currency,
+        interval_months=1 if interval == "month" else 12,
+    )
     return session.url
 
 
@@ -532,6 +628,8 @@ def process_webhook_event(event_type: str, data_object: dict):
     """
     if event_type == "checkout.session.completed":
         return process_checkout_session_completed(data_object)
+    elif event_type == "checkout.session.expired":
+        return release_checkout_reservation(data_object)
     elif event_type in (
         "payment_intent.succeeded",
         "payment_intent.processing",
@@ -560,10 +658,13 @@ def process_checkout_session_completed(session_data: dict):
     item_type = metadata.get("type")
 
     if item_type == "addon_purchase":
-        return process_addon_checkout_completed(session_data)
+        purchase = process_addon_checkout_completed(session_data)
     elif item_type == "subscription":
-        return process_subscription_checkout_completed(session_data)
-    return None
+        purchase = process_subscription_checkout_completed(session_data)
+    else:
+        return None
+    record_checkout_redemption(session_data, purchase)
+    return purchase
 
 
 def _record_checkout_invoice_for_subscription(
