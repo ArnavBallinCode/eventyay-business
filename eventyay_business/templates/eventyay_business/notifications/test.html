@@ -1,0 +1,38 @@
+{% extends 'pretixcontrol/admin/base.html' %}
+{% load i18n %}
+{% load bootstrap3 %}
+
+{% block title %}{% translate 'Send a test billing notification' %}{% endblock %}
+
+{% block content %}
+  <div class="page-header">
+    <h1>{% translate 'Send a test billing notification' %}</h1>
+  </div>
+
+  <div class="alert alert-info">
+    {% blocktranslate trimmed %}
+      Test delivery creates an audit record but never changes invoice, payment,
+      subscription or add-on state.
+    {% endblocktranslate %}
+  </div>
+
+  <div class="panel panel-default">
+    <div class="panel-body">
+      <form method="post" class="form-horizontal">
+        {% csrf_token %}
+        {% bootstrap_form form layout='horizontal' %}
+        <div class="form-group">
+          <div class="col-md-9 col-md-offset-3">
+            <button type="submit" class="btn btn-primary">
+              <i class="fa fa-paper-plane" aria-hidden="true"></i>
+              {% translate 'Send test' %}
+            </button>
+            <a class="btn btn-default" href="{% url 'plugins:eventyay_business:notifications.list' %}">
+              {% translate 'View delivery history' %}
+            </a>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}
