@@ -11,7 +11,6 @@ from django.db import transaction
 from django.db.models import Prefetch, Q, Sum
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
@@ -27,7 +26,6 @@ from django.views.generic import (
     View,
 )
 from django_scopes import scope
-from eventyay.base.i18n import language
 from eventyay.base.models import Event, Organizer, User
 from eventyay.base.models.organizer import OrganizerBillingModel
 from eventyay.control.permissions import (
@@ -101,14 +99,12 @@ from .models import (
 )
 from .notifications import (
     NOTIFICATION_PLACEHOLDERS,
-    NOTIFICATION_SPECS,
     BillingNotificationRecipient,
     notification_template_active_locales,
     notification_template_overrides,
     notification_template_sources,
     preview_notification_context,
     queue_billing_notification,
-    render_notification_content,
     reset_notification_template,
     retry_billing_notification,
     save_notification_template,
@@ -2479,10 +2475,8 @@ class AdminBillingNotificationRetryView(AdministratorPermissionRequiredMixin, Vi
         return redirect("plugins:eventyay_business:notifications.list")
 
 
-class AdminBillingNotificationPreviewView(
-    AdministratorPermissionRequiredMixin, FormView
-):
-    template_name = "eventyay_business/notifications/preview.html"
+class AdminBillingNotificationTestView(AdministratorPermissionRequiredMixin, FormView):
+    template_name = "eventyay_business/notifications/test.html"
     form_class = BillingNotificationTestForm
 
     def get_initial(self):
@@ -2491,38 +2485,6 @@ class AdminBillingNotificationPreviewView(
         if locale in {code for code, _label in settings.LANGUAGES}:
             initial["locale"] = locale
         return initial
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        locale = self.request.GET.get("locale") or "en"
-        valid_locales = {code for code, _label in settings.LANGUAGES}
-        if locale not in valid_locales:
-            locale = settings.LANGUAGE_CODE
-        previews = []
-        for event_type, spec in NOTIFICATION_SPECS.items():
-            preview_context = preview_notification_context(event_type)
-            subject, custom_body, is_custom = render_notification_content(
-                event_type, preview_context, locale
-            )
-            if custom_body is None:
-                with language(locale):
-                    body = render_to_string(spec.template_name, preview_context)
-            else:
-                body = custom_body
-            previews.append(
-                {
-                    "event_type": event_type,
-                    "label": BillingNotificationEventType(event_type).label,
-                    "subject": subject,
-                    "body": body,
-                    "is_custom": is_custom,
-                    "locale": locale,
-                }
-            )
-        context["previews"] = previews
-        context["preview_locale"] = locale
-        context["language_choices"] = settings.LANGUAGES
-        return context
 
     def form_valid(self, form):
         organizer = form.cleaned_data["organizer"]
@@ -2545,7 +2507,7 @@ class AdminBillingNotificationPreviewView(
             _("The test notification was queued without changing billing state."),
         )
         return redirect(
-            f"{reverse('plugins:eventyay_business:notifications.preview')}"
+            f"{reverse('plugins:eventyay_business:notifications.test')}"
             f"?locale={form.cleaned_data['locale']}"
         )
 

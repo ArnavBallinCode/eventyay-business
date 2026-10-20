@@ -73,9 +73,9 @@ urlpatterns = [
         name="notifications.list",
     ),
     path(
-        "admin/global/business/notifications/preview/",
-        views.AdminBillingNotificationPreviewView.as_view(),
-        name="notifications.preview",
+        "admin/global/business/notifications/test/",
+        views.AdminBillingNotificationTestView.as_view(),
+        name="notifications.test",
     ),
     path(
         "admin/global/business/notifications/templates/<str:event_type>/",

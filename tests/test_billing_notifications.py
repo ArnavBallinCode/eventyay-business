@@ -283,7 +283,7 @@ def test_admin_test_send_records_delivery_without_changing_billing_state(
         "eventyay_business.tasks.deliver_billing_notification_task.delay"
     ) as dispatch, django_capture_on_commit_callbacks(execute=True):
         response = business_admin_client.post(
-            reverse("plugins:eventyay_business:notifications.preview"),
+            reverse("plugins:eventyay_business:notifications.test"),
             {
                 "organizer": organizer.pk,
                 "event_type": BillingNotificationEventType.ADMIN_TEST,
@@ -331,17 +331,28 @@ def test_delivery_history_uses_trimmed_organizer_filter(
 
 
 @pytest.mark.django_db
-def test_invoice_list_links_to_notification_template_editor(business_admin_client):
+def test_invoice_list_links_to_message_center_templates(business_admin_client):
     response = business_admin_client.get(
         reverse("plugins:eventyay_business:invoices.list")
     )
 
     assert response.status_code == 200
     assert (
-        reverse("plugins:eventyay_business:notifications.preview").encode()
-        in response.content
+        reverse("eventyay_admin:admin.messages.templates").encode() in response.content
     )
     assert b"Customize email templates" in response.content
+
+
+@pytest.mark.django_db
+def test_test_notification_page_has_no_template_previews(business_admin_client):
+    response = business_admin_client.get(
+        reverse("plugins:eventyay_business:notifications.test")
+    )
+
+    assert response.status_code == 200
+    assert b"Send a test billing notification" in response.content
+    assert b"Template previews" not in response.content
+    assert b"Edit template" not in response.content
 
 
 @pytest.mark.django_db
@@ -440,11 +451,6 @@ def test_custom_notification_template_is_previewed_and_snapshotted(
     )
 
     assert response.status_code == 302
-    preview = business_admin_client.get(
-        reverse("plugins:eventyay_business:notifications.preview"), {"locale": "en"}
-    )
-    assert b"Invoice INV-EXAMPLE-001 is ready" in preview.content
-    assert b"Hello Example Organizer" in preview.content
 
     recipient = BillingNotificationRecipient(
         email="billing@example.com",
@@ -647,7 +653,7 @@ def test_test_notification_preserves_selected_language(
 
     with patch("eventyay_business.notifications.schedule_billing_notification"):
         response = business_admin_client.post(
-            reverse("plugins:eventyay_business:notifications.preview"),
+            reverse("plugins:eventyay_business:notifications.test"),
             {
                 "organizer": organizer.pk,
                 "event_type": BillingNotificationEventType.ADMIN_TEST,
@@ -659,9 +665,8 @@ def test_test_notification_preserves_selected_language(
     assert response.status_code == 302
     assert response.url.endswith("?locale=de")
 
-    preview = business_admin_client.get(response.url)
-    assert preview.context["preview_locale"] == "de"
-    assert preview.context["form"].initial["locale"] == "de"
+    test_page = business_admin_client.get(response.url)
+    assert test_page.context["form"].initial["locale"] == "de"
 
 
 @pytest.mark.django_db
