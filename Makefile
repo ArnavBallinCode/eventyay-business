@@ -1,5 +1,5 @@
 all: localecompile
-LNGS:=`find eventyay_business/locale/ -mindepth 1 -maxdepth 1 -type d -printf "-l %f "`
+LNGS:=$(shell find eventyay_business/locale -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sed 's/^/-l /')
 
 localecompile:
 	django-admin compilemessages
