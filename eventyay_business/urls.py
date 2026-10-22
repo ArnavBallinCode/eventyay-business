@@ -1,8 +1,10 @@
 from django.urls import path
 
 from . import views, views_stripe
+from .pricing import PricingPageView
 
 urlpatterns = [
+    path("pricing/", PricingPageView.as_view(), name="pricing"),
     # Global Admin URLs
     path(
         "admin/global/business/",

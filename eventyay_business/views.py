@@ -114,6 +114,7 @@ from .platform_fee_ledger import (
     organizer_billing_cutover_at,
     organizer_consolidated_billing_enabled,
 )
+from .pricing import public_tier_offers
 from .reconciliation import (
     accept_reconciliation_result,
     run_billing_reconciliation,
@@ -663,47 +664,12 @@ class OrganizerPlanUpgradeView(
             else None
         )
 
-        tiers = (
-            Tier.objects.filter(status=TierStatus.PUBLISHED, is_public=True)
-            .order_by("display_order", "id")
-            .prefetch_related("versions__prices", "versions__entitlements")
-        )
-        tier_list = []
-        for tier in tiers:
-            latest_version = (
-                tier.versions.filter(published_at__isnull=False)
-                .order_by("-version")
-                .first()
-            )
-            if not latest_version:
-                continue
-            prices = list(
-                latest_version.prices.filter(active=True).order_by(
-                    "billing_interval", "amount"
-                )
-            )
-            entitlements = list(latest_version.entitlements.all())
-            organizer_features = [
-                ent for ent in entitlements if ent.capability_audience != "developer"
-            ]
-            developer_features = [
-                ent for ent in entitlements if ent.capability_audience == "developer"
-            ]
-            is_current = (
+        tier_list = public_tier_offers()
+        for item in tier_list:
+            item["is_current"] = (
                 active_sub is not None
                 and active_sub.tier_version is not None
-                and active_sub.tier_version.tier_id == tier.id
-            )
-            tier_list.append(
-                {
-                    "tier": tier,
-                    "version": latest_version,
-                    "prices": prices,
-                    "entitlements": entitlements,
-                    "organizer_features": organizer_features,
-                    "developer_features": developer_features,
-                    "is_current": is_current,
-                }
+                and active_sub.tier_version.tier_id == item["tier"].id
             )
 
         ctx["tier_list"] = tier_list

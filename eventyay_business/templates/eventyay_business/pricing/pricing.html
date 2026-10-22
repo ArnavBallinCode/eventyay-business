@@ -1,0 +1,132 @@
+{% extends "pretixcontrol/admin/pages/base.html" %}
+{% load i18n %}
+
+{% block title %}{% if page.title %}{{ page.title }}{% else %}{% translate "Pricing" %}{% endif %}{% endblock %}
+
+{% block content %}
+    <div class="page-header">
+        <h1>{% if page.title %}{{ page.title }}{% else %}{% translate "Pricing" %}{% endif %}</h1>
+        <p class="lead">
+            {% if page.intro %}
+                {{ page.intro|linebreaksbr }}
+            {% else %}
+                {% translate "Choose the plan that fits your events. You can change your plan at any time." %}
+            {% endif %}
+        </p>
+    </div>
+
+    {% if show_visibility_notice %}
+        <div class="alert alert-warning">
+            {% url "plugins:eventyay_business:settings" as settings_url %}
+            {% if visibility == "signed_in" %}
+                {% blocktranslate trimmed %}
+                    Only signed-in users can see this page. Change who can see it in
+                    <a href="{{ settings_url }}">Business settings</a>.
+                {% endblocktranslate %}
+            {% else %}
+                {% blocktranslate trimmed %}
+                    Only platform administrators can see this page. Change who can see it in
+                    <a href="{{ settings_url }}">Business settings</a>.
+                {% endblocktranslate %}
+            {% endif %}
+        </div>
+    {% endif %}
+
+    {% if page.show_tiers %}
+        <div class="row">
+            {% for item in tier_list %}
+                <div class="col-md-4 col-sm-6">
+                    <div class="panel panel-default" style="display: flex; flex-direction: column; height: 100%;">
+                        <div class="panel-heading text-center">
+                            <h2 class="panel-title" style="font-size: 20px; font-weight: bold;">{{ item.tier.name }}</h2>
+                        </div>
+                        <div class="panel-body" style="flex: 1; padding: 20px;">
+                            <div class="text-center" style="margin-bottom: 15px;">
+                                {% for price in item.paid_prices %}
+                                    <div>
+                                        <strong style="font-size: 18px;">{{ price.amount }} {{ price.currency }}</strong>
+                                        <span class="text-muted">/ {{ price.get_billing_interval_display }}</span>
+                                    </div>
+                                {% empty %}
+                                    <strong style="font-size: 18px;">
+                                        {% if item.prices %}{% translate "Free" %}{% else %}{% translate "Contact us" %}{% endif %}
+                                    </strong>
+                                {% endfor %}
+                            </div>
+                            {% if item.tier.description %}
+                                <p class="text-muted" style="font-size: 13px; line-height: 1.5;">{{ item.tier.description }}</p>
+                            {% endif %}
+                            {% if page.show_features %}
+                                {% include "eventyay_business/pricing/_tier_features.html" %}
+                            {% endif %}
+                        </div>
+                        {% if page.show_signup_button %}
+                            <div class="panel-footer text-center" style="background: #fafafa;">
+                                {% if purchase_links|length == 1 %}
+                                    <a class="btn btn-primary btn-block" href="{{ purchase_links.0.url }}">
+                                        {% translate "Choose this plan" %}
+                                    </a>
+                                {% elif purchase_links %}
+                                    <details class="pricing-organizer-choice text-left" style="position: relative;">
+                                        <summary class="btn btn-primary btn-block">{% translate "Choose this plan" %}</summary>
+                                        <ul class="list-group" style="position: absolute; left: 0; right: 0; z-index: 20; margin: 4px 0 0; max-height: 240px; overflow-y: auto; box-shadow: 0 6px 12px rgba(0, 0, 0, 0.175);">
+                                            {% for link in purchase_links %}
+                                                <li class="list-group-item"><a href="{{ link.url }}">{{ link.organizer.name }}</a></li>
+                                            {% endfor %}
+                                        </ul>
+                                    </details>
+                                {% else %}
+                                    <a class="btn btn-primary btn-block" href="{% if page.signup_url %}{{ page.signup_url }}{% else %}{% url 'eventyay_common:dashboard' %}{% endif %}">
+                                        {% if page.signup_label %}{{ page.signup_label }}{% else %}{% translate "Get started" %}{% endif %}
+                                    </a>
+                                {% endif %}
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            {% empty %}
+                <div class="col-xs-12">
+                    <div class="alert alert-info">{% translate "No plans are published yet." %}</div>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    {% if page.footer_note %}
+        <p class="text-muted">{{ page.footer_note|linebreaksbr }}</p>
+    {% endif %}
+
+    {% if addons %}
+        <h2>{% translate "Add-ons" %}</h2>
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>{% translate "Add-on" %}</th>
+                        <th>{% translate "Applies to" %}</th>
+                        <th class="text-right">{% translate "Price" %}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for addon in addons %}
+                        <tr>
+                            <td>
+                                <strong>{{ addon.name }}</strong>
+                                {% if addon.description %}<div class="text-muted">{{ addon.description }}</div>{% endif %}
+                            </td>
+                            <td>{{ addon.get_assignment_scope_display }}</td>
+                            <td class="text-right">
+                                {% if addon.price %}
+                                    {{ addon.price }} {{ addon.currency }}
+                                    <span class="text-muted">({{ addon.get_pricing_mode_display }})</span>
+                                {% else %}
+                                    {% translate "Free" %}
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+{% endblock %}
