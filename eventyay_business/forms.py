@@ -34,6 +34,12 @@ from .models import (
     VoucherDiscountDuration,
 )
 from .notifications import NOTIFICATION_PLACEHOLDERS
+from .pricing import (
+    PRICING_PAGE_SWITCHES,
+    PRICING_PAGE_VISIBILITY_SETTING,
+    PricingPageVisibility,
+    pricing_page_visibility,
+)
 from .services import normalize_collection_retry_days, normalize_grace_reminder_days
 from .vouchers import get_voucher_quote
 
@@ -1175,9 +1181,124 @@ class GlobalBusinessSettingsForm(SettingsForm):
                             ),
                         ),
                     ),
+                    (
+                        PRICING_PAGE_VISIBILITY_SETTING,
+                        forms.ChoiceField(
+                            choices=PricingPageVisibility.choices,
+                            required=False,
+                            widget=forms.RadioSelect,
+                            label=_("Who can see the pricing page"),
+                            help_text=_(
+                                "The page is at /pricing/. Platform administrators can "
+                                "always view it."
+                            ),
+                        ),
+                    ),
+                    (
+                        "business_pricing_title",
+                        forms.CharField(
+                            required=False,
+                            max_length=200,
+                            label=_("Page title"),
+                            help_text=_("Leave empty to use “Pricing”."),
+                        ),
+                    ),
+                    (
+                        "business_pricing_intro",
+                        forms.CharField(
+                            required=False,
+                            widget=forms.Textarea(attrs={"rows": 3}),
+                            label=_("Introduction"),
+                            help_text=_(
+                                "Shown below the title. Leave empty to use the default "
+                                "introduction."
+                            ),
+                        ),
+                    ),
+                    (
+                        "business_pricing_show_tiers",
+                        forms.BooleanField(
+                            required=False,
+                            label=_("Show plans"),
+                            help_text=_(
+                                "Lists published plans marked public in Business → Tiers."
+                            ),
+                        ),
+                    ),
+                    (
+                        "business_pricing_show_features",
+                        forms.BooleanField(
+                            required=False,
+                            label=_("Show plan features"),
+                            help_text=_("Lists the limits and features of each plan."),
+                        ),
+                    ),
+                    (
+                        "business_pricing_show_developer_features",
+                        forms.BooleanField(
+                            required=False,
+                            label=_("Show developer features"),
+                            help_text=_(
+                                "Includes API and webhook features in each plan."
+                            ),
+                        ),
+                    ),
+                    (
+                        "business_pricing_show_addons",
+                        forms.BooleanField(
+                            required=False,
+                            label=_("Show add-ons"),
+                            help_text=_(
+                                "Lists active add-ons marked public in Business → Add-ons."
+                            ),
+                        ),
+                    ),
+                    (
+                        "business_pricing_show_signup_button",
+                        forms.BooleanField(
+                            required=False,
+                            label=_("Show sign-up button"),
+                            help_text=_("Adds a button to each plan."),
+                        ),
+                    ),
+                    (
+                        "business_pricing_signup_label",
+                        forms.CharField(
+                            required=False,
+                            max_length=100,
+                            label=_("Sign-up button text"),
+                            help_text=_("Leave empty to use “Get started”."),
+                        ),
+                    ),
+                    (
+                        "business_pricing_signup_url",
+                        forms.CharField(
+                            required=False,
+                            max_length=500,
+                            label=_("Sign-up button link"),
+                            help_text=_(
+                                "A path such as /common/ or a full https:// address. "
+                                "Leave empty to link to the Eventyay dashboard."
+                            ),
+                        ),
+                    ),
+                    (
+                        "business_pricing_footer_note",
+                        forms.CharField(
+                            required=False,
+                            widget=forms.Textarea(attrs={"rows": 2}),
+                            label=_("Note below the plans"),
+                            help_text=_("For example: “Prices exclude VAT.”"),
+                        ),
+                    ),
                 ]
             )
         )
+        self.initial[PRICING_PAGE_VISIBILITY_SETTING] = pricing_page_visibility()
+        for key, default in PRICING_PAGE_SWITCHES.items():
+            self.initial[key] = self.obj.settings.get(
+                key, as_type=bool, default=default
+            )
 
         if (
             "billing_validation" not in self.initial
@@ -1236,7 +1357,38 @@ class GlobalBusinessSettingsForm(SettingsForm):
                     "business_renewal_reminder_days",
                 ],
             ),
+            (
+                "pricing_page",
+                _("Pricing Page"),
+                [
+                    PRICING_PAGE_VISIBILITY_SETTING,
+                    "business_pricing_title",
+                    "business_pricing_intro",
+                    *PRICING_PAGE_SWITCHES,
+                    "business_pricing_signup_label",
+                    "business_pricing_signup_url",
+                    "business_pricing_footer_note",
+                ],
+            ),
         ]
+
+    def clean_business_pricing_page_visibility(self):
+        return (
+            self.cleaned_data.get(PRICING_PAGE_VISIBILITY_SETTING)
+            or PricingPageVisibility.ADMINS
+        )
+
+    def clean_business_pricing_signup_url(self):
+        url = (self.cleaned_data.get("business_pricing_signup_url") or "").strip()
+        if url and not (
+            (url.startswith("/") and not url.startswith("//"))
+            or url.startswith("https://")
+            or url.startswith("http://")
+        ):
+            raise forms.ValidationError(
+                _("Enter a path starting with / or a full http(s):// address.")
+            )
+        return url
 
     def clean_business_collection_retry_days(self):
         value = self.cleaned_data.get("business_collection_retry_days") or "1, 3, 5"

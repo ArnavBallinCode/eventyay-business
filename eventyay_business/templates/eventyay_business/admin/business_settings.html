@@ -88,6 +88,28 @@
                     </div>
                 </div>
             </fieldset>
+            <fieldset id="tab-pricing_page">
+                <legend>{% translate "Pricing Page" %}</legend>
+                {% bootstrap_field form.business_pricing_page_visibility layout='control' %}
+                <div class="form-group">
+                    <div class="col-md-9 col-md-offset-3">
+                        <a class="btn btn-default" href="{% url 'plugins:eventyay_business:pricing' %}" target="_blank" rel="noopener">
+                            <i class="fa fa-external-link" aria-hidden="true"></i>
+                            {% translate "View pricing page" %}
+                        </a>
+                    </div>
+                </div>
+                {% bootstrap_field form.business_pricing_title layout='control' %}
+                {% bootstrap_field form.business_pricing_intro layout='control' %}
+                {% bootstrap_field form.business_pricing_show_tiers layout='control' %}
+                {% bootstrap_field form.business_pricing_show_features layout='control' %}
+                {% bootstrap_field form.business_pricing_show_developer_features layout='control' %}
+                {% bootstrap_field form.business_pricing_show_addons layout='control' %}
+                {% bootstrap_field form.business_pricing_show_signup_button layout='control' %}
+                {% bootstrap_field form.business_pricing_signup_label layout='control' %}
+                {% bootstrap_field form.business_pricing_signup_url layout='control' %}
+                {% bootstrap_field form.business_pricing_footer_note layout='control' %}
+            </fieldset>
             <fieldset id="tab-invoice_presentation">
                 <legend>{% translate "Invoice presentation" %}</legend>
                 <p class="help-block">
