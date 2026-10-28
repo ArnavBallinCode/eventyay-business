@@ -309,7 +309,9 @@ def platform_fee_rows(
                 "fee_base": charge.fee_base,
                 "percentage": charge.percentage,
                 "maximum_fee": charge.maximum_fee,
-                "calculated_fee": gross,
+                "calculated_fee": (
+                    charge.calculated_fee if charge.pk in selected_ids else ZERO
+                ),
                 "adjustment": adjustment,
                 "net": gross + adjustment,
                 "state": "mixed" if len(states) > 1 else states.pop(),
