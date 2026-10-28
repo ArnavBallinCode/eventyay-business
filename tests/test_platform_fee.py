@@ -371,6 +371,44 @@ def test_partial_and_full_refunds_create_linked_negative_entries(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "collection_path", ["not_enabled", "pre_cutover", "checkout", "partial_checkout"]
+)
+def test_fee_breakdown_shows_calculated_fee_separately_from_accrual(
+    organizer_with_fee_tier, collection_path
+):
+    if collection_path == "not_enabled":
+        organizer_with_fee_tier.settings.set(BILLING_CUTOVER_SETTING, "")
+    elif collection_path == "pre_cutover":
+        organizer_with_fee_tier.settings.set(
+            BILLING_CUTOVER_SETTING, (now() + timedelta(days=1)).isoformat()
+        )
+    application_fees = {
+        "checkout": (500,),
+        "partial_checkout": (200,),
+    }.get(collection_path, ())
+    event, order, _ = create_paid_order(
+        organizer_with_fee_tier, application_fees=application_fees
+    )
+    record_platform_fee_on_order_paid(sender=event, order=order)
+
+    overview = build_organizer_billing_overview(organizer_with_fee_tier)
+
+    expected_net = (
+        Decimal("3.00") if collection_path == "partial_checkout" else Decimal("0.00")
+    )
+    assert len(overview["fee_rows"]) == 1
+    row = overview["fee_rows"][0]
+    assert row["percentage"] == Decimal("5.00")
+    assert row["calculated_fee"] == Decimal("5.00")
+    assert row["net"] == expected_net
+    usd_total = next(
+        total for total in overview["totals"] if total["currency"] == "USD"
+    )
+    assert usd_total["ticket_fees"] == expected_net
+
+
+@pytest.mark.django_db
 def test_current_charge_estimate_uses_ledger_refund_adjustments(
     organizer_with_fee_tier,
 ):
